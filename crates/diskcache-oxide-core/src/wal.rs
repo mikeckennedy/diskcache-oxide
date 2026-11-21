@@ -154,6 +154,18 @@ pub(crate) enum Decision {
     Checkpoint,
 }
 
+/// Whether a `PRAGMA wal_checkpoint(PASSIVE)` row `(busy, log, copied)` says the whole WAL is now in
+/// the database file, so only a reset is left to do.
+///
+/// `busy` has to be read: when another connection holds the checkpoint lock, PASSIVE does nothing
+/// and answers `(1, -1, -1)`, whose two frame counts are equal. Taking that for "all copied" sent
+/// the background checkpoint on to TRUNCATE under the write lock, and if the other checkpointer let
+/// go in between, that TRUNCATE did the whole copy there. Frames left behind a reader's snapshot
+/// are `(0, n, m)` with `m < n`.
+pub(crate) const fn passive_copied_everything(busy: i64, log: i64, copied: i64) -> bool {
+    busy == 0 && log == copied
+}
+
 /// How a forced checkpoint went.
 #[derive(Debug)]
 pub(crate) enum Outcome {
@@ -446,5 +458,14 @@ mod tests {
             Decision::Checkpoint,
             "still over the limit, and no backoff after a success"
         );
+    }
+
+    #[test]
+    fn a_passive_row_is_all_copied_only_when_it_isnt_busy_and_no_frame_is_left() {
+        assert!(passive_copied_everything(0, 120, 120), "every frame copied");
+        assert!(passive_copied_everything(0, 0, 0), "an empty WAL");
+        assert!(!passive_copied_everything(0, 120, 80), "frames left behind a reader's snapshot");
+        assert!(!passive_copied_everything(1, -1, -1), "another connection holds the checkpoint lock");
+        assert!(!passive_copied_everything(1, 120, 120), "busy, whatever the counts say");
     }
 }

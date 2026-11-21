@@ -291,6 +291,42 @@ def test_a_per_handle_registry_shadows_the_global_one(directory: Path) -> None:
             plain.get('r')
 
 
+@pytest.mark.parametrize('pickle', [False, True], ids=['no pickle', 'pickle=True'])
+@pytest.mark.parametrize('serializer', SERIALIZERS)
+def test_a_global_type_whose_name_the_handles_registry_gives_another_class_is_refused(
+    directory: Path, serializer: str, pickle: bool
+) -> None:
+    # Plan 32, D4: encoding found Point in the global registry and wrote "$t:x"; decoding looked "x"
+    # up in the handle's registry first and built an Html from Point's body. No error anywhere.
+    register_type(Point, name='x', encode=point_encode, decode=point_decode)
+    mine = TypeRegistry()
+    mine.register(Html, name='x', encode=str, decode=Html)
+    message = 'can\'t store a Point in this cache: it is registered as "x".*uses that name for Html'
+    with Cache(directory, types=mine, serializer=serializer, pickle=pickle) as cache:
+        for value in (Point(1, 2), [Point(1, 2)], {'nested': {'p': Point(1, 2)}}):
+            with pytest.raises(TypeError, match=message):
+                cache.set('k', value)
+        assert 'k' not in cache, 'never pickled instead: the type was registered to stay off pickle'
+        # The handle's own class under that name is untouched, and so is every other type.
+        cache.set('h', Html('<b>'))
+        assert cache.get('h') == Html('<b>') and type(cache.get('h')) is Html
+        cache.set('plain', [1, 'two'])
+        # A handle without that registry stores a Point as before.
+        with Cache(directory, serializer=serializer) as plain:
+            plain.set('p', Point(1, 2))
+            assert plain.get('p') == Point(1, 2)
+        # Registered later, either way round: the check is at encode, not at registration.
+        unregister_type(Point)
+        register_type(Point, name='y', encode=point_encode, decode=point_decode)
+        cache.set('k', Point(3, 4))
+        assert cache.get('k') == Point(3, 4)
+        mine.register(Entry, name='y', encode=tuple, decode=lambda t: Entry(*t))
+        with pytest.raises(TypeError, match='uses that name for Entry'):
+            cache.set('k', Point(5, 6))
+        # What the check can't reach: a row written before the name was taken reads as the name says now.
+        assert tuple(cache.get('k')) == (3, 4) and type(cache.get('k')) is Entry
+
+
 def test_the_own_types_are_refused() -> None:
     for cls in (str, bytes, int, float, bool, type(None), list, tuple, dict, set, frozenset, dt.datetime, dt.date):
         with pytest.raises(ValueError, match='stores itself'):

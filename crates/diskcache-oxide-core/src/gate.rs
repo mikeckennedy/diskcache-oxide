@@ -176,9 +176,6 @@ struct Owner {
     /// [`Gate::begin_fork`] (a share dropped then also takes its level off the parked half of
     /// [`Gate::counts`]), and [`FORKING`] while it holds the fork claim.
     levels: AtomicUsize,
-    /// The [`Gate::epoch`] this thread exists in. A share whose owner is from an older epoch was
-    /// inherited across fork from a thread that doesn't exist here, and its level was never counted.
-    epoch: AtomicU64,
 }
 
 /// Set in [`Owner::levels`] while the thread is parked in [`Gate::begin_fork`].
@@ -212,6 +209,18 @@ pub fn generation() -> u64 {
     GENERATION.load(Ordering::Acquire)
 }
 
+/// Runs the child-side reset now if the calling thread is the forking thread in the forked child
+/// and its after-fork hook hasn't run yet: another library's `after_in_child` hook, registered
+/// before ours, is using a cache. A gate entry does the same (`enter_child_early`); this is for a
+/// caller that reads [`generation`] or asks whether a file is usable without entering the gate
+/// (`stats()`, a transaction's exit), which would otherwise see the parent's answers. One
+/// thread-local read anywhere else.
+pub fn catch_up_in_child() {
+    if GLOBAL_THREAD.try_with(|t| t.forking.get()).unwrap_or(false) {
+        enter_child_early();
+    }
+}
+
 /// A reentrant shared/exclusive gate whose exclusive side survives `fork()`. See the module docs.
 #[derive(Debug)]
 pub struct Gate {
@@ -225,14 +234,14 @@ pub struct Gate {
     /// A fork is claimed: set by [`Gate::begin_fork`], cleared when its [`ForkGuard`] ends. Also
     /// what makes concurrent forks take turns.
     pending: AtomicBool,
-    /// Bumped in the forked child, see [`Owner::epoch`].
+    /// Bumped in the forked child, see [`HeldShare::epoch`].
     epoch: AtomicU64,
     /// Work with no deadline was left for the end of a fork (see [`Gate::mark_deferred`]).
     deferred: AtomicBool,
     /// How many [`Gate::enter_shared_until`] calls gave up behind a pending fork. Cold path only.
     fork_timeouts: AtomicU64,
     local: &'static LocalKey<ThreadState>,
-    /// Run when the forking thread enters at depth 0 before its fork has ended (see
+    /// Run when the forking thread enters, at any depth, before its fork has ended (see
     /// [`enter_child_early`]).
     early_child_entry: Option<fn()>,
 }
@@ -244,7 +253,7 @@ impl Gate {
         Self::with_early_child_entry_opt(local, None)
     }
 
-    /// [`Gate::new`], running `early` when the forking thread enters at depth 0 between
+    /// [`Gate::new`], running `early` when the forking thread enters, at any depth, between
     /// [`Gate::begin_fork`] and the end of its fork.
     const fn with_early_child_entry(local: &'static LocalKey<ThreadState>, early: fn()) -> Self {
         Self::with_early_child_entry_opt(local, Some(early))
@@ -267,8 +276,9 @@ impl Gate {
     pub fn try_enter_shared(&self) -> Option<SharedGuard<'_>> {
         self.local.with(|t| {
             let depth = t.depth.get();
-            if depth == 0
-                && t.forking.get()
+            // At any depth: a fork from a hook inside an operation leaves this thread at depth 1 in
+            // the child, and its first entry there must still run the child-side reset first.
+            if t.forking.get()
                 && let Some(early) = self.early_child_entry
             {
                 early();
@@ -502,16 +512,28 @@ impl Gate {
         });
     }
 
-    /// In the forked child, where only the forking thread exists: its levels are the only ones,
-    /// nobody is parked, and shares owned by the parent's other threads no longer count.
+    /// In the forked child, where only the forking thread exists: the levels it holds through
+    /// guards are the only ones, and nobody is parked. Every share made before the fork counts for
+    /// nothing from here on, the forking thread's own included (plan 32): the bumped epoch makes
+    /// each one inert, so it enters as inherited and drops without touching a count.
+    ///
+    /// That has to cover them all, not just the shares of threads the child doesn't have. A share
+    /// can be on the stack of such a thread while still counted as the forking thread's: its
+    /// transaction being ended on another thread, which was waiting behind this fork. Nothing in
+    /// the child can ever drop that one, so a count that included it would never come back down,
+    /// and the child's next `os.fork()` from another thread would wait for it forever. The database
+    /// behind an inherited share is unusable here anyway ([`crate::poison`]).
     fn reset_in_child(&self) {
-        let epoch = self.epoch.fetch_add(1, Ordering::SeqCst) + 1;
-        self.local.with(|t| {
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        let depth = self.local.with(|t| {
             if let Some(owner) = t.held.get() {
-                owner.epoch.store(epoch, Ordering::SeqCst);
+                // The flags stay: `ForkGuard::finish` clears `FORKING` next, and a parked thread
+                // doesn't get here.
+                owner.levels.fetch_and(FLAGS, Ordering::SeqCst);
             }
+            t.depth.get()
         });
-        self.counts.store(u64::try_from(self.own_depth()).unwrap_or(LOW) & LOW, Ordering::SeqCst);
+        self.counts.store(u64::try_from(depth).unwrap_or(LOW) & LOW, Ordering::SeqCst);
     }
 
     /// The child-side reset when this thread never claimed the fork (its before-fork hook didn't
@@ -597,12 +619,7 @@ impl<'g> SharedGuard<'g> {
     pub fn into_held(self) -> HeldShare<'g> {
         let gate = self.gate;
         let owner = gate.local.with(|t| {
-            let owner = Arc::clone(t.held.get_or_init(|| {
-                Arc::new(Owner {
-                    levels: AtomicUsize::new(0),
-                    epoch: AtomicU64::new(gate.epoch.load(Ordering::SeqCst)),
-                })
-            }));
+            let owner = Arc::clone(t.held.get_or_init(|| Arc::new(Owner { levels: AtomicUsize::new(0) })));
             // Move the level from the depth to the held count; only this thread reads either.
             owner.levels.fetch_add(1, Ordering::SeqCst);
             if t.forking.get() {
@@ -612,10 +629,31 @@ impl<'g> SharedGuard<'g> {
             t.depth.set(t.depth.get().saturating_sub(1));
             owner
         });
-        let share = HeldShare { gate, owner };
+        let share = HeldShare { gate, owner, epoch: gate.epoch.load(Ordering::SeqCst) };
         std::mem::forget(self);
         share
     }
+}
+
+impl SharedGuard<'_> {
+    /// Whether the calling thread holds the fork claim: it's between [`Gate::begin_fork`] and the
+    /// end of its fork. `pending` is read first, so outside a fork it's one relaxed load.
+    fn owner_is_forking(&self) -> bool {
+        // Relaxed: only this thread's own claim matters, and it set the flag itself.
+        self.gate.pending.load(Ordering::Relaxed)
+            // try_with: a connection can be given back while this thread's locals are being destroyed.
+            && self.gate.local.try_with(|t| t.forking.get()).unwrap_or(false)
+    }
+}
+
+/// Whether the calling thread is the forking thread of [`GATE`], in the parent, between its
+/// before- and after-fork hooks: code another library's before-fork hook runs. A connection it
+/// gives back there is closed, not kept idle for the child to inherit ([`crate::pool`]).
+///
+/// The pid check keeps it false in the child, where the claim is still set until
+/// [`end_fork_child`] runs: closing a connection there would close one the parent owns.
+pub(crate) fn forking_in_parent(guard: &SharedGuard<'_>) -> bool {
+    guard.owner_is_forking() && std::process::id() == FORKING_PID.load(Ordering::Acquire)
 }
 
 impl Drop for SharedGuard<'_> {
@@ -635,6 +673,10 @@ pub struct HeldShare<'g> {
     gate: &'g Gate,
     /// The entering thread's held count.
     owner: Arc<Owner>,
+    /// The [`Gate::epoch`] the share was made in. In a later one it crossed a `fork()`: the child
+    /// counts no such share ([`Gate::reset_in_child`]), whichever thread made it, so it enters as
+    /// [`ShareEntry::Inherited`] and its drop does nothing.
+    epoch: u64,
 }
 
 impl<'g> HeldShare<'g> {
@@ -715,13 +757,13 @@ impl<'g> HeldShare<'g> {
         let gate = self.gate;
         gate.local.with(|t| {
             let depth = t.depth.get();
-            if depth == 0
-                && t.forking.get()
+            // At any depth, as in `try_enter_shared`.
+            if t.forking.get()
                 && let Some(early) = gate.early_child_entry
             {
                 early();
             }
-            if self.owner.epoch.load(Ordering::SeqCst) != gate.epoch.load(Ordering::SeqCst) {
+            if self.epoch != gate.epoch.load(Ordering::SeqCst) {
                 return ShareEntry::Inherited;
             }
             // Increment, then check, as in `try_enter_shared`: either the forker's quiescence check
@@ -748,9 +790,8 @@ enum ShareEntry<'g> {
 
 impl Drop for HeldShare<'_> {
     fn drop(&mut self) {
-        if self.owner.epoch.load(Ordering::SeqCst) != self.gate.epoch.load(Ordering::SeqCst) {
-            // Inherited across fork from a thread parked in begin_fork in the parent: the child
-            // never counted its level.
+        if self.epoch != self.gate.epoch.load(Ordering::SeqCst) {
+            // Made before a fork this process is the child of: the child counts no such share.
             return;
         }
         // Off the owner first: if a fork is pending, the owner then stops counting as reentrant no
@@ -821,11 +862,12 @@ static FORKING_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32:
 /// The process [`end_fork_child`] last ran in, so it runs once per child.
 static CHILD_RESET_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-/// [`GATE`]'s early child entry: the forking thread entering at depth 0 before its after-fork hook
-/// ran. In the child that's another library's `after_in_child` hook registered before ours (they
-/// run in registration order) using a cache: run the child-side reset now, so it doesn't see
-/// the parent's connections, write lock or unpoisoned transactions. In the parent (other
-/// libraries' fork hooks around ours) it does nothing.
+/// [`GATE`]'s early child entry: the forking thread entering, at any depth, before its after-fork
+/// hook ran. In the child that's another library's `after_in_child` hook registered before ours
+/// (they run in registration order) using a cache: run the child-side reset now, so it doesn't see
+/// the parent's connections, write lock or unpoisoned transactions, and never opens a connection
+/// on a file the scan is about to mark unusable. In the parent (other libraries' fork hooks around
+/// ours) it does nothing.
 fn enter_child_early() {
     if std::process::id() != FORKING_PID.load(Ordering::Acquire) {
         end_fork_child();
@@ -865,8 +907,15 @@ pub fn end_fork_parent() {
 }
 
 /// The after-fork hook in the child: bumps the process generation, poisons the databases a write
-/// transaction was held on at the fork (D-020, see [`crate::poison`]), then reopens the gate. Runs
-/// once per child: the first gate entry by an earlier `after_in_child` hook may have run it already.
+/// transaction was held on at the fork, and every database a connection was inherited open to
+/// (D-020, see [`crate::poison`] and the scan in [`crate::pool`]), then reopens the gate.
+/// Runs once per child: the first gate entry by an earlier `after_in_child` hook may have run it
+/// already.
+///
+/// The order matters. The scan comes after the generation bump (every connection it finds is then
+/// stale, and nothing can check one out before it), without entering the gate, and before
+/// `resume_after_fork`, which may start the maintenance thread: its connections belong to the
+/// child and must not be counted.
 pub fn end_fork_child() {
     let pid = std::process::id();
     if CHILD_RESET_PID.swap(pid, Ordering::AcqRel) == pid {
@@ -874,6 +923,8 @@ pub fn end_fork_child() {
     }
     GENERATION.fetch_add(1, Ordering::AcqRel);
     crate::poison::poison_live_holds();
+    crate::pool::poison_inherited();
+    crate::store::reset_held_in_child();
     match HELD_FORK.with(|held| held.borrow_mut().take()) {
         Some(guard) => guard.end_child(),
         // The before-hook didn't run (it can't fail, but CPython ignores before-hook errors). Still
@@ -1029,11 +1080,44 @@ mod tests {
         // The forking thread may still use the gate between the hooks.
         assert!(gate.try_enter_shared().is_some());
         fork.end_child();
-        assert_eq!(gate.holders(), 2, "the child keeps exactly the forking thread's levels");
+        assert_eq!(gate.holders(), 1, "the child keeps the forking thread's guard, not its share");
+        assert_eq!(gate.own_depth(), 1, "an inherited share isn't a level of this thread's any more");
         drop(held);
+        assert_eq!(gate.holders(), 1, "an inherited share's drop changes nothing");
         drop(outer);
         assert_eq!(gate.holders(), 0);
         assert_eq!(gate.own_depth(), 0);
+    }
+
+    /// Plan 32, bug B: a share the forking thread owns, but which another thread had taken to end
+    /// (a transaction's `__exit__` waiting behind this fork). That thread doesn't exist in the
+    /// child, so nothing can ever drop the share there: it must count for nothing, or the child's
+    /// next fork from another thread waits for it forever.
+    #[test]
+    fn a_share_stranded_on_a_thread_the_child_doesnt_have_counts_for_nothing() {
+        let gate = test_gate!(G);
+        // The ender's stack, as the child sees it: not unwound while the child works.
+        let stranded = std::mem::ManuallyDrop::new(gate.try_enter_shared().unwrap().into_held());
+        let fork = gate.begin_fork();
+        fork.end_child();
+        assert_eq!((gate.holders(), gate.own_depth()), (0, 0));
+        // A fork from another thread of the child isn't held up.
+        let (tx, rx) = mpsc::channel();
+        let forker = thread::spawn(move || {
+            gate.begin_fork().end_parent();
+            tx.send(()).unwrap();
+        });
+        rx.recv_timeout(Duration::from_secs(5)).expect("the child's fork waited for a share nothing can drop");
+        forker.join().unwrap();
+        // And the forking thread waits for locks like any thread with no level: it gets a new share.
+        let fresh = gate.try_enter_shared().unwrap().into_held();
+        assert_eq!((gate.holders(), gate.own_depth()), (1, 1));
+        drop(fresh);
+        assert_eq!((gate.holders(), gate.own_depth()), (0, 0));
+        // Dropped after all, so the test leaks nothing (Miri and LeakSanitizer check): an inherited
+        // share's drop takes nothing off either count.
+        drop(std::mem::ManuallyDrop::into_inner(stranded));
+        assert_eq!((gate.holders(), gate.own_depth()), (0, 0));
     }
 
     #[test]
@@ -1253,12 +1337,12 @@ mod tests {
         let own = gate.try_enter_shared().unwrap().into_held();
         let fork = gate.begin_fork();
         fork.end_child();
-        assert_eq!(gate.holders(), 1, "only the forking thread's level is left");
+        assert_eq!(gate.holders(), 0, "no share that crossed the fork is counted, the forking thread's included");
         assert_eq!(gate.parked(), 0);
         drop(parked_share);
-        assert_eq!(gate.holders(), 1, "an inherited share from a parked forker was counted");
+        assert_eq!(gate.holders(), 0, "an inherited share from a parked forker was counted");
         assert_eq!(gate.parked(), 0);
-        // The forking thread's own share still counts after the fork, on any thread.
+        // The forking thread's own inherited share drops as a no-op too, on any thread.
         thread::spawn(move || drop(own)).join().unwrap();
         assert_eq!(gate.holders(), 0);
         assert_eq!(gate.own_depth(), 0);

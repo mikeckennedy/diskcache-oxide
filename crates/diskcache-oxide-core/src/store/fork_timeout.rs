@@ -1233,7 +1233,7 @@ fn row_17_a_pool_dropped_behind_a_fork_is_closed_by_that_fork() {
     let store = open_store(tmp.path());
     // A pool with one idle connection on a file of its own, dropped while a fork waits for a level.
     let gate = GATE.enter_shared_blocking();
-    let pool = Pool::new(&gate, 2);
+    let pool = Pool::new(&gate, 2, store.file_id);
     let pooled = pool.checkout(&gate, || open::connect(tmp.path(), T)).unwrap();
     pool.checkin(&gate, pooled);
     let weak_idle = pool.idle(&gate);
@@ -1436,5 +1436,161 @@ fn background_maintenance_is_refused_behind_a_fork() {
     assert!(early.read(|_| Ok(())).is_some(), "the turn's calls go again after the fork");
     drop(early);
     assert!(store.begin_background_turn().is_some());
+    store.release_handle();
+}
+
+// Plan 32: a database this process inherited an open connection to can't be used here at all.
+
+#[test]
+fn an_unusable_store_refuses_reads_writes_holds_and_opens_and_other_stores_work() {
+    let (tmp, other_tmp) = (TempDir::new("unusable"), TempDir::new("unusable-other"));
+    let (store, other) = (open_store(tmp.path()), open_store(other_tmp.path()));
+    put(&store, "k");
+    let rows = |s: &Store| {
+        s.read(T, |c| {
+            c.query_row("SELECT COUNT(*) FROM cache", [], |r| r.get::<_, i64>(0)).map_err(|e| Error::from_sqlite(e, T))
+        })
+    };
+    let write = |s: &Store| s.write(T, |_, _| Ok(()));
+    let unusable = store.unusable_for_test();
+    assert!(matches!(rows(&store), Err(Error::Unusable)), "a read");
+    assert!(matches!(write(&store), Err(Error::Unusable)), "a write");
+    assert!(store.write_nowait(|_| Ok(())).is_none(), "an opportunistic write is skipped");
+    assert!(matches!(store.begin_hold(T), Err(Error::Unusable)), "a transaction");
+    assert!(matches!(store.checkpoint(T), Err(Error::Unusable)), "a checkpoint");
+    assert!(matches!(store.check_usable(), Err(Error::Unusable)));
+    assert!(store.is_poisoned(), "background maintenance skips it");
+    // A second handle on the same directory: refused before it is counted or connects.
+    let handles = store.settled_handles();
+    assert!(matches!(Store::open(&options(tmp.path(), T)), Err(Error::Unusable)));
+    assert_eq!(store.settled_handles(), handles, "no handle was claimed");
+    assert!(
+        matches!(crate::layout::read_format(tmp.path(), T, Instant::now() + T), Ok(Some(_))),
+        "answered from the open store"
+    );
+    // Other files are untouched.
+    put(&other, "k");
+    assert_eq!(rows(&other).unwrap(), 1);
+    // Nothing was leased: the scan a later fork runs would find no connection out.
+    let gate = GATE.enter_shared_blocking();
+    assert_eq!(store.pool.checked_out(&gate), 0);
+    drop(gate);
+    drop(unusable);
+    assert_eq!(rows(&store).unwrap(), 1, "the guard only lasts for the test");
+}
+
+#[test]
+fn a_fresh_open_of_an_unusable_file_is_refused_before_it_connects() {
+    let tmp = TempDir::new("unusable-fresh");
+    let store = open_store(tmp.path());
+    let id = store.file_id;
+    store.release_handle();
+    only_owner(&store);
+    drop(store);
+    // No store in this process has the file now, so an open takes the slow path.
+    let unusable = crate::poison::unusable_for_test(id);
+    assert!(matches!(Store::open(&options(tmp.path(), T)), Err(Error::Unusable)));
+    assert!(matches!(crate::layout::read_format(tmp.path(), T, Instant::now() + T), Err(Error::Unusable)));
+    assert_eq!(fds_inside(tmp.path()), 0, "no connection was left open");
+    drop(unusable);
+    open_store(tmp.path()).release_handle();
+}
+
+#[test]
+fn a_connection_given_back_between_the_fork_hooks_is_closed_not_kept_idle() {
+    let _forks = one_global_fork_at_a_time();
+    let (tmp, late_tmp) = (TempDir::new("fork-between"), TempDir::new("fork-between-late"));
+    let store = open_store(tmp.path());
+    put(&store, "k");
+    let idle = |s: &Store| {
+        let gate = GATE.try_enter_shared().expect("the forking thread, or no fork");
+        (s.pool.idle(&gate), s.pool.checked_out(&gate))
+    };
+    assert_eq!(idle(&store), (1, 0));
+    gate::begin_fork();
+    assert_eq!(idle(&store), (0, 0), "the before-fork hook closed the idle connection");
+    // Another library's before-fork hook, running after ours on the forking thread: it reads,
+    // writes, and opens a cache of its own.
+    store.read(T, |_| Ok(())).unwrap();
+    put(&store, "between");
+    let late = open_store(late_tmp.path());
+    put(&late, "k");
+    let between = (idle(&store), idle(&late));
+    gate::end_fork_parent();
+    assert_eq!(between, ((0, 0), (0, 0)), "nothing left for a child to inherit");
+    // Back to normal once the fork has ended.
+    store.read(T, |_| Ok(())).unwrap();
+    put(&late, "after");
+    assert_eq!((idle(&store), idle(&late)), ((1, 0), (1, 0)));
+    assert_eq!(
+        store
+            .read(T, |c| c
+                .query_row("SELECT COUNT(*) FROM cache", [], |r| r.get::<_, i64>(0))
+                .map_err(|e| Error::from_sqlite(e, T)))
+            .unwrap(),
+        2
+    );
+}
+
+// Plan 32, D5: VACUUM and the checkpoint after it share one budget.
+
+#[test]
+fn vacuum_gives_its_checkpoint_what_is_left_of_the_one_budget() {
+    let tmp = TempDir::new("vacuum-budget");
+    let store = Store::open(&options(tmp.path(), T)).unwrap();
+    put(&store, "k");
+    let budget = Duration::from_millis(800);
+    let held_for = Duration::from_millis(450);
+    // Another process's write transaction makes VACUUM wait for over half the budget.
+    let writer = open::connect(tmp.path(), T).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    // And a reader's snapshot keeps the checkpoint after it busy until its deadline.
+    let reader = open::connect(tmp.path(), T).unwrap();
+    reader.execute_batch("BEGIN; SELECT COUNT(*) FROM cache;").unwrap();
+    let started = Instant::now();
+    let took = std::thread::scope(|s| {
+        s.spawn(move || {
+            std::thread::sleep(held_for);
+            writer.execute_batch("COMMIT").unwrap();
+        });
+        let result = store.vacuum(budget);
+        (result, started.elapsed())
+    });
+    reader.execute_batch("COMMIT").unwrap();
+    let (result, took) = took;
+    result.unwrap();
+    assert!(took >= held_for, "VACUUM didn't wait for the other writer: {took:?}");
+    // A fresh budget for the checkpoint would end at `held_for + budget`, 1.25 s.
+    assert!(took < budget + Duration::from_millis(250), "the checkpoint got a budget of its own: {took:?}");
+    store.release_handle();
+}
+
+/// Gemini's review of plan 32, M1: a handle closed in a process that can't use the file stays
+/// closed. It used to be claimed first, with a new pin opened on the file, and only then refused.
+#[test]
+fn a_closed_handle_on_an_unusable_store_stays_closed_and_opens_no_pin() {
+    let tmp = TempDir::new("unusable-reopen");
+    let store = open_store(tmp.path());
+    put(&store, "k");
+    let empty = tmp.path().join("ab");
+    std::fs::create_dir(&empty).unwrap();
+    let unusable = store.unusable_for_test();
+    store.release_handle();
+    assert!(store.is_retired());
+    assert!(empty.exists(), "the release swept the parent's directory");
+    store.sweep_value_dirs(Duration::ZERO);
+    assert!(empty.exists(), "a sweep ran on a cache this process can't use");
+    let claimed = std::cell::Cell::new(false);
+    let joined = store.add_handle_until(Instant::now() + T, crate::background::Maintenance::OFF, || {
+        claimed.set(true);
+        true
+    });
+    assert!(matches!(joined, Err(Error::Unusable)), "{joined:?}");
+    assert!(!claimed.get(), "the handle was marked open");
+    assert!(store.is_retired() && store.settled_handles() == 0, "the store was revived");
+    drop(unusable);
+    store.add_handle_until(Instant::now() + T, crate::background::Maintenance::OFF, || true).unwrap();
+    store.sweep_value_dirs(Duration::ZERO);
+    assert!(!empty.exists());
     store.release_handle();
 }

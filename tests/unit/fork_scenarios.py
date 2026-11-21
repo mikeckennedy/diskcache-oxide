@@ -62,24 +62,86 @@ def wait(pid: int, deadline: float = CHILD_DEADLINE) -> Optional[int]:
 
 
 def fails_fast(what: str, call: Callable[[], object]) -> None:
-    """`call()` raises RuntimeError well before the cache's timeout (D-020)."""
+    """`call()` raises `ForkedInsideTransactionError`, a RuntimeError, well before the cache's timeout (D-020)."""
+    from diskcache_oxide import ForkedInsideTransactionError
+
     start = time.monotonic()
     try:
         call()
-    except RuntimeError:
+    except RuntimeError as ex:
         elapsed = time.monotonic() - start
+        assert type(ex) is ForkedInsideTransactionError, f'{what}: {type(ex).__name__}: {ex}'
         assert elapsed < FAST, f'{what}: RuntimeError only after {elapsed:.2f}s'
     else:
         raise AssertionError(f'{what}: expected RuntimeError')
 
 
+UNUSABLE = "can't be used in this process"
+
+# The cache the two decode hooks below read: one this process may not be able to use.
+HELD: list[Cache] = []
+
+
+class ReadsHeldOnDecode:
+    """A registered type whose `decode` reads another cache."""
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+
+def decode_reading_held(n: int) -> ReadsHeldOnDecode:
+    HELD[0].get('before')
+    return ReadsHeldOnDecode(n)
+
+
+class ReadsHeldOnUnpickle:
+    """A pickled value whose `__setstate__` reads another cache."""
+
+    def __init__(self) -> None:
+        self.n = 1
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        HELD[0].get('before')
+        self.__dict__.update(state)
+
+
+def unusable(what: str, call: Callable[[], object]) -> None:
+    """`call()` raises the "unusable after fork" error, `ForkedInsideTransactionError`, a RuntimeError
+    (D-020, plan 32), at once."""
+    from diskcache_oxide import ForkedInsideTransactionError
+
+    start = time.monotonic()
+    try:
+        got = call()
+    except RuntimeError as ex:
+        elapsed = time.monotonic() - start
+        assert type(ex) is ForkedInsideTransactionError, f'{what}: {type(ex).__name__}: {ex}'
+        assert UNUSABLE in str(ex), f'{what}: a different RuntimeError: {ex}'
+        assert elapsed < FAST, f'{what}: RuntimeError only after {elapsed:.2f}s'
+    else:
+        raise AssertionError(f'{what}: expected RuntimeError, got {got!r}')
+
+
+def still_answers(cache: Cache | FanoutCache, directory: Path) -> None:
+    """What an unusable cache still does (plan 32, decision 5): what's answered from memory, and close."""
+    import pickle
+
+    assert Path(cache.directory) == directory, cache.directory
+    assert cache.timeout == TIMEOUT
+    assert 'Cache' in repr(cache)
+    assert isinstance(pickle.dumps(cache), bytes)
+    cache.close()
+    cache.close()
+
+
 def d020(directory: Path) -> list[str]:
     """Fork inside this thread's own held transaction (D-020).
 
-    The child can never write that database: through the inherited Cache, a fresh Cache on the same
-    directory, or in a grandchild, each write raises RuntimeError at once. Operations inside the
-    inherited transaction and leaving it raise too. Reads outside it, and other directories, work.
-    The parent gets a RuntimeWarning, and its transaction commits normally.
+    The child can never use that database: through the inherited Cache every call, read or write,
+    raises RuntimeError at once, a fresh Cache on the same directory can't be opened, and the same
+    holds in a grandchild. Leaving the inherited transaction raises too. What a handle answers from
+    memory, and `close()`, still work, and so do other directories. The parent gets a
+    RuntimeWarning, and its transaction commits normally.
     """
     other = directory.parent / f'{directory.name}-other'
     cache = Cache(directory, timeout=TIMEOUT)
@@ -89,36 +151,101 @@ def d020(directory: Path) -> list[str]:
     hold.__enter__()
     cache.set('in-hold', 1)
 
+    from diskcache_oxide import Caches
+
+    reported: list[object] = []
+    registry: Caches[str] = Caches(directory.parent, on_open_error=lambda name, error: reported.append((name, error)))
+    registry.register('held', directory=directory, timeout=TIMEOUT)
+    registry.register('elsewhere', directory=other, timeout=TIMEOUT)
+    # A failed open in the parent, its retry window still running at the fork: the child must not
+    # be served that NullCache for the rest of the window (Gemini's review of plan 32, M2).
+    from diskcache_oxide import NullCache
+
+    registry._failed['held'] = (time.monotonic() + 600, NullCache())
+
+    # A healthy cache whose values' decode hooks read the held one (the architect's step 8 review).
+    from diskcache_oxide import register_type, unregister_type
+
+    hooks = directory.parent / f'{directory.name}-hooks'
+    HELD.append(cache)
+    register_type(ReadsHeldOnDecode, name='tests.ReadsHeldOnDecode', encode=lambda v: v.n, decode=decode_reading_held)
+    with Cache(hooks, timeout=TIMEOUT, pickle=True) as hooked:
+        hooked.set('typed', ReadsHeldOnDecode(7))
+        hooked.set('pickled', ReadsHeldOnUnpickle())
+
+    def hooks_raise_and_keep_their_rows() -> None:
+        """A hook that reads the unusable cache says nothing about its own row's bytes: the error
+        passes through as itself, and the row stays, whatever `on_decode_error` says. Read as an
+        unreadable value, every such read deleted a good row from a cache other processes share."""
+        for policy in ('raise', 'miss'):
+            with Cache(hooks, timeout=TIMEOUT, pickle=True, on_decode_error=policy) as hooked:
+                for key in ('typed', 'pickled'):
+                    unusable(
+                        f'a {key} value whose hook reads the held cache, on_decode_error={policy}',
+                        lambda: hooked.get(key),
+                    )
+                    assert key in hooked, f'the {key} row was deleted for an error that was not about it'
+
     def grandchild() -> None:
-        fails_fast(
-            'grandchild write, fresh Cache',
-            lambda: Cache(directory, timeout=TIMEOUT).set('grandchild', 1),
-        )
-        assert Cache(directory, timeout=TIMEOUT).get('before') == 'parent'
+        unusable('grandchild, a fresh Cache', lambda: Cache(directory, timeout=TIMEOUT))
+        unusable('grandchild, a read through the inherited Cache', lambda: cache.get('before'))
+        unusable('grandchild, a write through the inherited Cache', lambda: cache.set('grandchild', 1))
         with Cache(other, timeout=TIMEOUT) as elsewhere:
             assert elsewhere.set('grandchild', 1) is True and elsewhere.get('grandchild') == 1
+        # A closed handle stays closed: a call on it used to reopen it, with a new connection on the
+        # file, before raising (Gemini's review of plan 32, M1).
+        cache.close()
+        for _ in range(2):
+            unusable('grandchild, a read through the closed Cache', lambda: cache.get('before'))
+        unusable('grandchild, stats on the closed Cache', cache.stats)
 
     def child() -> None:
-        fails_fast('write inside the inherited transaction', lambda: cache.set('child', 1))
-        fails_fast('read inside the inherited transaction', lambda: cache.get('before'))
+        unusable('write inside the inherited transaction', lambda: cache.set('child', 1))
+        unusable('read inside the inherited transaction', lambda: cache.get('before'))
         fails_fast('leaving the inherited transaction', lambda: hold.__exit__(None, None, None))
-        assert cache.get('before') == 'parent', 'a read after leaving the transaction'
-        assert cache.get('in-hold') is None, "the parent's uncommitted write is visible"
-        fails_fast('write through the inherited Cache', lambda: cache.set('child', 1))
-        fails_fast('pop of a key the child can read', lambda: cache.pop('before'))
-        fails_fast('pop of a missing key', lambda: cache.pop('missing'))
-        assert cache.get('before') == 'parent', 'the refused pop removed nothing'
-        fails_fast('pull from a queue', cache.pull)
-        fails_fast('push onto a queue', lambda: cache.push('child'))
-        assert cache.peek() == (queued, 'queued'), 'peek still reads, and the refused pull removed nothing'
-        fresh = Cache(directory, timeout=TIMEOUT)
-        assert fresh.get('before') == 'parent'
-        fails_fast('write through a fresh Cache', lambda: fresh.set('child', 1))
-        fails_fast('checkpoint through a fresh Cache', fresh.checkpoint)
+        calls: dict[str, Callable[[], object]] = {
+            'get': lambda: cache.get('before'),
+            'getitem': lambda: cache['before'],
+            'in': lambda: 'before' in cache,
+            'set': lambda: cache.set('child', 1),
+            'add': lambda: cache.add('child', 1),
+            'incr': lambda: cache.incr('n'),
+            'touch': lambda: cache.touch('before'),
+            'delete': lambda: cache.delete('before'),
+            'pop of a stored key': lambda: cache.pop('before'),
+            'pop of a missing key': lambda: cache.pop('missing'),
+            'pull': cache.pull,
+            'push': lambda: cache.push('child'),
+            'peek': cache.peek,
+            'len': lambda: len(cache),
+            'iteration': lambda: list(cache),
+            'volume': cache.volume,
+            'stats': cache.stats,
+            'expire': cache.expire,
+            'cull': cache.cull,
+            'clear': cache.clear,
+            'evict': lambda: cache.evict('tag'),
+            'evict of no tag': lambda: cache.evict(None),
+            'remove_old_formats': cache.remove_old_formats,
+            'check': cache.check,
+            'checkpoint': cache.checkpoint,
+            'transact': lambda: cache.transact().__enter__(),
+            'a fresh Cache': lambda: Cache(directory, timeout=TIMEOUT),
+            # A registry's first lookup raises too, rather than serve a NullCache it could never replace.
+            'a Caches lookup': lambda: registry['held'],
+            'a Caches lookup, again': lambda: registry['held'],
+            'a Caches lookup by get': lambda: registry.get('held'),
+        }
+        for name, call in calls.items():
+            unusable(name, call)
+        assert reported == [], f'on_open_error ran for an error no retry can help: {reported}'
+        assert registry['elsewhere'].set('registry', 1) is True, 'another cache in the same registry works'
+        hooks_raise_and_keep_their_rows()
         with Cache(other, timeout=TIMEOUT) as elsewhere:
             assert elsewhere.set('child', 1) is True and elsewhere.get('child') == 1
         code = wait(fork(grandchild))
         assert code == 0, f'grandchild exit code {code}'
+        still_answers(cache, directory)
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
@@ -129,12 +256,20 @@ def d020(directory: Path) -> list[str]:
     failures = []
     if code != 0:
         failures.append(f'child exit code {code}')
+    with Cache(hooks, timeout=TIMEOUT, pickle=True) as hooked:
+        typed, pickled = hooked.get('typed'), hooked.get('pickled')
+        if not (isinstance(typed, ReadsHeldOnDecode) and typed.n == 7 and isinstance(pickled, ReadsHeldOnUnpickle)):
+            failures.append(f'the parent lost a value whose hook failed in the child: {typed!r}, {pickled!r}')
+    unregister_type(ReadsHeldOnDecode)
+    HELD.clear()
     if not any(issubclass(w.category, RuntimeWarning) for w in caught):
         failures.append('the parent got no RuntimeWarning for forking inside its transaction')
     if cache.get('in-hold') != 1:
         failures.append("the parent's held transaction did not commit")
     if cache.get('child') is not None or cache.get('grandchild') is not None:
         failures.append('a poisoned process wrote to the database')
+    if (cache.get('before'), cache.peek()) != ('parent', (queued, 'queued')):
+        failures.append('a refused call in the child changed the database')
     with Cache(other) as elsewhere:
         if elsewhere.get('child') != 1 or elsewhere.get('grandchild') != 1:
             failures.append('the other directory is missing the child or grandchild write')
@@ -456,21 +591,21 @@ def shared_iterator_while_a_fork_waits(directory: Path) -> list[str]:
 def transact_fork_from_the_owner(directory: Path) -> list[str]:
     """Fork inside this thread's own `with cache.transact()` block (D-020, through the public API).
 
-    In the child the inherited transaction is poisoned: a write inside it, a nested `transact()`
-    (an inherited transaction doesn't count as this thread's, so it doesn't pass through), one on a
-    fresh handle, and leaving the block all raise RuntimeError at once. The parent's block commits.
+    In the child the inherited transaction is poisoned and its database unusable: a write inside
+    it, a nested `transact()` (an inherited transaction doesn't count as this thread's, so it doesn't
+    pass through), opening a fresh handle, leaving the block, and a read after it all raise
+    RuntimeError at once. The parent's block commits.
     """
     cache = Cache(directory, timeout=TIMEOUT)
     cache.set('before', 'parent')
     txn = cache.transact()
 
     def child() -> None:
-        fails_fast('write inside the inherited transaction', lambda: cache.set('child', 1))
-        fails_fast('a nested transact()', lambda: cache.transact().__enter__())
-        fails_fast("a fresh handle's transact()", lambda: Cache(directory, timeout=TIMEOUT).transact().__enter__())
+        unusable('write inside the inherited transaction', lambda: cache.set('child', 1))
+        unusable('a nested transact()', lambda: cache.transact().__enter__())
+        unusable('a fresh handle', lambda: Cache(directory, timeout=TIMEOUT))
         fails_fast('leaving the inherited transaction', lambda: txn.__exit__(None, None, None))
-        assert cache.get('before') == 'parent'
-        assert cache.get('in-tx') is None, "the parent's uncommitted write is visible"
+        unusable('a read after leaving it', lambda: cache.get('before'))
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
@@ -515,7 +650,7 @@ def transact_inherited_mid_operation(directory: Path) -> list[str]:
     is already pending, waiting on B's level (a probe that times out on a short-timeout handle shows
     it), so B's before-fork hook parks behind it and the main thread forks first, with the held
     connection lent to B's read. In that child the transaction is inherited from a thread the child
-    doesn't have: leaving it raises RuntimeError at once, and the database is unwritable (D-020).
+    doesn't have: leaving it raises RuntimeError at once, and the database is unusable (D-020).
     In the parent, B's own fork then goes ahead, and its transaction commits.
     """
     register_type(ForkOnDecode, name='tests.ForkOnDecode', encode=lambda v: v.n, decode=fork_on_decode)
@@ -561,10 +696,9 @@ def transact_inherited_mid_operation(directory: Path) -> list[str]:
 
     def child() -> None:
         fails_fast('leaving a transaction inherited mid-operation', lambda: txn.__exit__(None, None, None))
-        assert cache.get('before') == 'parent'
-        assert cache.get('in-tx') is None, "the parent's uncommitted write is visible"
-        fails_fast('write through the inherited Cache', lambda: cache.set('child', 1))
-        fails_fast('write through a fresh Cache', lambda: Cache(directory, timeout=TIMEOUT).set('child', 1))
+        unusable('read through the inherited Cache', lambda: cache.get('before'))
+        unusable('write through the inherited Cache', lambda: cache.set('child', 1))
+        unusable('a fresh Cache', lambda: Cache(directory, timeout=TIMEOUT))
 
     thread = threading.Thread(target=owner, daemon=True)
     thread.start()
@@ -1034,8 +1168,8 @@ def d020_wal(directory: Path) -> list[str]:
 
     def child() -> None:
         fails_fast('leaving the inherited transaction', lambda: hold.__exit__(None, None, None))
-        assert cache.get('before') == 'parent', 'a read after leaving the transaction'
-        assert cache.get('k000') is None, "the parent's uncommitted write is visible"
+        unusable('a read after leaving the transaction', lambda: cache.get('before'))
+        cache.close()
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', RuntimeWarning)

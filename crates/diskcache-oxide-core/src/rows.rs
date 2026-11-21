@@ -9,10 +9,14 @@
 //! running `clear()` could then delete a write made after it started. So every delete first raises
 //! `state.next_seq` (the floor) past the current maximum. Overwrites never touch `state` unless
 //! the count or size changes, which keeps a plain `set` to the same WAL pages as diskcache's.
+//!
+//! The maximum is taken over sound numbers only (`max_store_seq!`): a row whose `store_seq` is
+//! damaged (text, a BLOB, or a number at or above 2^62, as a bad page leaves it) would otherwise be
+//! the maximum, and every later write would get the same number, or one that isn't an integer.
 
 use std::time::Duration;
 
-use rusqlite::types::{ToSqlOutput, Value};
+use rusqlite::types::{ToSqlOutput, Value, ValueRef};
 use rusqlite::{Connection, OptionalExtension, ToSql};
 
 use crate::key::Key;
@@ -42,11 +46,83 @@ impl ToSql for Stored<'_> {
     }
 }
 
+/// The SQL for the largest sound `store_seq` in the table, or 0 for none: an expression every
+/// statement that hands out or bounds a sequence number shares.
+///
+/// Sound means a number below 2^62 (`SEQ_CEILING`). In SQLite's order text and BLOBs sort above every
+/// number, so the range leaves them out, along with any number at or above the ceiling; a REAL
+/// inside the range is cut to the integer below it, and the next number is still above it. Without
+/// this a row with a damaged `store_seq` made `MAX(store_seq) + 1` come out as 1 for every later
+/// write (text or a BLOB), or as a REAL that the next statement couldn't read (plan 32, step 8). The
+/// range is one seek on the `cache_store_seq` index, as the bare `MAX` was.
+macro_rules! max_store_seq {
+    () => {
+        "COALESCE(CAST((SELECT MAX(store_seq) FROM cache WHERE store_seq < 4611686018427387904) AS INTEGER), 0)"
+    };
+}
+pub(crate) use max_store_seq;
+
+/// The SQL for the `store_seq` a write takes: one past the largest sound number, or the floor
+/// `$floor` (an expression for `state.next_seq`) if that's higher. NULL, which the column's
+/// `NOT NULL` refuses, when that would reach the ceiling.
+///
+/// The ceiling has to fail the write: a number at or above it is left out of the next maximum, so
+/// handing one out would hand the same one out again to every write after it, silently. Counting
+/// can't get there (2^62 writes), so this is for damage: a `store_seq` just under the ceiling, or a
+/// `next_seq` at or above it.
+///
+/// A `next_seq` that isn't an integer fails the write the same way. A REAL below the ceiling would
+/// otherwise come through the scalar `MAX` as the number itself, and `incr` on a stored number
+/// (which reads nothing back) would write it into the row. `check(fix=True)` repairs the floor.
+/// `$floor` is evaluated twice, so pass a column, not a subquery.
+macro_rules! next_store_seq {
+    ($floor:literal) => {
+        concat!(
+            "CASE WHEN typeof(",
+            $floor,
+            ") = 'integer' THEN NULLIF(MIN(MAX(",
+            max_store_seq!(),
+            " + 1, ",
+            $floor,
+            "), 4611686018427387904), 4611686018427387904) END"
+        )
+    };
+}
+
+/// The SQL for `state.next_seq` as a bound: the floor itself when it's sound (an integer below the
+/// ceiling), 0 when it's damaged, so what reads it for a bound (`clear()`, `evict`) still runs.
+macro_rules! sound_next_seq {
+    () => {
+        "CASE WHEN typeof(next_seq) = 'integer' AND next_seq < 4611686018427387904 THEN next_seq ELSE 0 END"
+    };
+}
+pub(crate) use sound_next_seq;
+
+/// The largest `size` a row may have: 2^48 bytes (256 TiB). No value file is that large, so a size
+/// above it, or below 0, is damage: `check()` reports it (`WRONG_TYPE`), and it counts as 0 toward
+/// the totals ([`lenient_size`], `sound_size!`). Summed as it is, one such size would overflow
+/// `state.size` into a REAL, or `check`'s own `SUM` into an error.
+pub(crate) const MAX_SIZE: i64 = 1 << 48;
+
+/// The SQL for a row's `size` as the totals count it: see [`MAX_SIZE`].
+macro_rules! sound_size {
+    () => {
+        "CASE WHEN typeof(size) = 'integer' AND size BETWEEN 0 AND 281474976710656 THEN size ELSE 0 END"
+    };
+}
+pub(crate) use sound_size;
+
+/// One past the largest `store_seq` a row may have: 2^62. No cache counts that far, so a number at or
+/// above it is damage, which `check()` reports (`WRONG_TYPE`) and the numbering leaves out.
+#[cfg(test)]
+const SEQ_CEILING: i64 = 1 << 62;
+
 /// The in-place update of a number's row (see [`RowWriter::update_number_in_place`]).
-pub(crate) const UPDATE_NUMBER_SQL: &str = "UPDATE cache SET mode = ?1, value = ?2, store_time = ?3,
-         store_seq = MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1,
-                         (SELECT next_seq FROM state WHERE only = 1))
-     WHERE id = ?4";
+pub(crate) const UPDATE_NUMBER_SQL: &str = concat!(
+    "UPDATE cache SET mode = ?1, value = ?2, store_time = ?3, store_seq = (SELECT ",
+    next_store_seq!("next_seq"),
+    " FROM state WHERE only = 1) WHERE id = ?4"
+);
 
 /// An entry's tag: a key value (D-052), in its own type so it can't be passed where a key belongs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +171,72 @@ pub struct RowWriter<'t> {
     timeout: Duration,
 }
 
+/// The SQL test for a row with a column of a type the schema never stores there: what `check()`
+/// reports as a damaged row, and what `check(fix=True)` deletes.
+///
+/// A `store_seq` at or above 2^62 counts too, whatever its type: no cache counts that far, the
+/// numbering leaves such a row out (`max_store_seq!`), and no `clear()` bound reaches it. So does
+/// the last number below it, 2^62 - 1: no number is left to follow it, so every write fails while
+/// the row is there. And a `size` outside 0 to [`MAX_SIZE`].
+///
+/// The numbering still hands 2^62 - 1 out, to a write that follows a row at 2^62 - 2 or a floor at
+/// 2^62 - 1: both are damage already, at one value in 2^62. That last row then reads as damaged, and
+/// `check(fix=True)` removes it. Refusing the number instead would move the same edge one down and
+/// leave a cache no write and no repair could get past.
+pub(crate) const WRONG_TYPE: &str = "(typeof(mode) != 'integer' OR typeof(size) != 'integer' \
+     OR size < 0 OR size > 281474976710656 \
+     OR typeof(store_seq) != 'integer' OR store_seq >= 4611686018427387903 \
+     OR typeof(expire_time) NOT IN ('real', 'integer', 'null') \
+     OR typeof(filename) NOT IN ('text', 'null'))";
+
+/// What `check()` reports a `store_seq` or `next_seq` as when it's an integer too large to be one
+/// (2^62 - 1 or more for a row, 2^62 or more for the floor), in place of its type.
+pub(crate) const SEQ_OUT_OF_RANGE: &str = "an integer too large to be one";
+
+/// What `check()` reports a `size` as when it's an integer outside 0 to [`MAX_SIZE`].
+pub(crate) const SIZE_OUT_OF_RANGE: &str = "an integer no size can be";
+
+/// What a `filename` column that isn't TEXT reads as: a name no value file can have
+/// (`spill::value_path` refuses it), so every caller's existing path for a damaged name runs. A read
+/// finds no file and reports a miss (D-013), a delete unlinks nothing, and `check` reports the row.
+pub(crate) const NOT_A_NAME: &str = "<not text>";
+
+/// A row's `filename` column, whatever SQLite has in it. The schema says TEXT or NULL, but a
+/// damaged page, or a hand that edited the file, can leave any type there, and a typed read would
+/// turn that one row into an error on every `get`, `delete`, `clear()` and eviction that reaches it.
+pub(crate) fn lenient_filename(value: ValueRef<'_>) -> Option<String> {
+    match value {
+        ValueRef::Null => None,
+        ValueRef::Text(bytes) => Some(std::str::from_utf8(bytes).map_or_else(|_| NOT_A_NAME.to_owned(), str::to_owned)),
+        _ => Some(NOT_A_NAME.to_owned()),
+    }
+}
+
+/// A row's `size` column for the cache's totals: 0 when it isn't an integer, or is one no size can
+/// be (negative, or above [`MAX_SIZE`]), so a damaged size never reaches `state.size`. `check`
+/// counts it the same way (`sound_size!`).
+pub(crate) fn lenient_size(value: ValueRef<'_>) -> i64 {
+    match value {
+        ValueRef::Integer(size) if (0..=MAX_SIZE).contains(&size) => size,
+        _ => 0,
+    }
+}
+
+/// A row's `size` column for reading its value file: a size no file has when it isn't an integer,
+/// so the read finds a damaged row, not a short one.
+pub(crate) fn file_size(value: ValueRef<'_>) -> i64 {
+    match value {
+        ValueRef::Integer(size) => size,
+        _ => -1,
+    }
+}
+
+/// The `size, filename` a `DELETE ... RETURNING` or a lookup of the row being replaced gives, read
+/// leniently (see [`lenient_filename`], [`lenient_size`]).
+pub(crate) fn size_and_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Option<String>)> {
+    Ok((lenient_size(row.get_ref(0)?), lenient_filename(row.get_ref(1)?)))
+}
+
 impl<'t> RowWriter<'t> {
     #[must_use]
     pub fn new(tx: &'t Connection, timeout: Duration) -> Self {
@@ -114,7 +256,7 @@ impl<'t> RowWriter<'t> {
         let key = key.into();
         self.tx
             .prepare_cached("SELECT size, filename FROM cache WHERE key_type = ?1 AND key = ?2")
-            .and_then(|mut stmt| stmt.query_row((key.key_type(), key), |r| Ok((r.get(0)?, r.get(1)?))).optional())
+            .and_then(|mut stmt| stmt.query_row((key.key_type(), key), size_and_file).optional())
             .map_err(|e| self.sqlite(e))
     }
 
@@ -127,18 +269,20 @@ impl<'t> RowWriter<'t> {
         };
         let seq: i64 = self
             .tx
-            .prepare_cached(
+            .prepare_cached(concat!(
                 "INSERT INTO cache (key_type, key, mode, value, filename, size, store_time, expire_time, tag_type, tag,
                                     store_seq)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                         (SELECT MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1, next_seq) FROM state WHERE only = 1))
+                         (SELECT ",
+                next_store_seq!("next_seq"),
+                " FROM state WHERE only = 1))
                  ON CONFLICT (key_type, key) DO UPDATE SET
                      mode = excluded.mode, value = excluded.value, filename = excluded.filename,
                      size = excluded.size, store_time = excluded.store_time,
                      expire_time = excluded.expire_time, tag_type = excluded.tag_type, tag = excluded.tag,
                      store_seq = excluded.store_seq
-                 RETURNING store_seq",
-            )
+                 RETURNING store_seq"
+            ))
             .and_then(|mut stmt| {
                 let (tag_type, tag) = match row.tag {
                     Some(Tag(tag)) => (tag.key_type(), Some(tag)),
@@ -191,7 +335,7 @@ impl<'t> RowWriter<'t> {
         let removed = self
             .tx
             .prepare_cached("DELETE FROM cache WHERE key_type = ?1 AND key = ?2 RETURNING size, filename")
-            .and_then(|mut stmt| stmt.query_row((key.key_type(), key), |r| Ok((r.get(0)?, r.get(1)?))).optional())
+            .and_then(|mut stmt| stmt.query_row((key.key_type(), key), size_and_file).optional())
             .map_err(|e| self.sqlite(e))?;
         self.finish_delete(removed)
     }
@@ -204,7 +348,21 @@ impl<'t> RowWriter<'t> {
         let removed = self
             .tx
             .prepare_cached("DELETE FROM cache WHERE id = ?1 AND store_seq = ?2 RETURNING size, filename")
-            .and_then(|mut stmt| stmt.query_row((id, store_seq), |r| Ok((r.get(0)?, r.get(1)?))).optional())
+            .and_then(|mut stmt| stmt.query_row((id, store_seq), size_and_file).optional())
+            .map_err(|e| self.sqlite(e))?;
+        self.finish_delete(removed)
+    }
+
+    /// Deletes the row `id` if it still has a column of the wrong type (`WRONG_TYPE`): for
+    /// `check(fix=True)`. By `id` alone, since its `store_seq` may be the damaged column, and asked
+    /// again here, inside the delete: an overwrite keeps a row's `id`, so one that came between the
+    /// check's look and this write has made the row a healthy one, which must stay.
+    pub fn delete_damaged(&self, id: i64) -> Result<Option<Removed>> {
+        self.raise_seq_floor()?;
+        let removed = self
+            .tx
+            .prepare_cached(&format!("DELETE FROM cache WHERE id = ?1 AND {WRONG_TYPE} RETURNING size, filename"))
+            .and_then(|mut stmt| stmt.query_row([id], size_and_file).optional())
             .map_err(|e| self.sqlite(e))?;
         self.finish_delete(removed)
     }
@@ -257,10 +415,11 @@ impl<'t> RowWriter<'t> {
     /// change writes anyway.
     pub fn raise_seq_floor(&self) -> Result<()> {
         self.tx
-            .prepare_cached(
-                "UPDATE state SET next_seq = MAX(next_seq, COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1)
-                 WHERE only = 1",
-            )
+            .prepare_cached(concat!(
+                "UPDATE state SET next_seq = MAX(next_seq, ",
+                max_store_seq!(),
+                " + 1) WHERE only = 1"
+            ))
             .and_then(|mut stmt| stmt.execute([]))
             .map(|_| ())
             .map_err(|e| self.sqlite(e))
@@ -272,10 +431,7 @@ impl<'t> RowWriter<'t> {
         let rows = self
             .tx
             .prepare_cached(sql)
-            .and_then(|mut stmt| {
-                stmt.query_map(params, |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)))?
-                    .collect::<rusqlite::Result<Vec<_>>>()
-            })
+            .and_then(|mut stmt| stmt.query_map(params, size_and_file)?.collect::<rusqlite::Result<Vec<_>>>())
             .map_err(|e| self.sqlite(e))?
             .into_iter()
             .map(|(row_size, filename)| {
@@ -460,5 +616,186 @@ mod tests {
             }
         }
         assert_eq!(totals(&conn), actual(&conn));
+    }
+
+    /// Plan 32, D1. `filename` is read through `lenient_filename` everywhere: a typed read of an
+    /// optional text column turns one damaged row into an error on every call that reaches it.
+    /// No other column in the schema is optional text read back as a `String`, so the typed forms
+    /// are banned outright.
+    #[test]
+    fn no_column_is_read_as_typed_optional_text() {
+        fn scan(dir: &std::path::Path, banned: &[String], found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    scan(&path, banned, found);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    for (n, line) in text.lines().enumerate() {
+                        if banned.iter().any(|b| line.contains(b.as_str())) && !line.trim_start().starts_with("//") {
+                            found.push(format!("{}:{}", path.display(), n + 1));
+                        }
+                    }
+                }
+            }
+        }
+        // Spelled in pieces, so this file passes its own scan.
+        let optional_text = ["Option<", "String>"].concat();
+        let banned = [
+            format!("get::<_, {optional_text}>"),
+            format!("{optional_text} = row.get"),
+            format!("{optional_text} = r.get"),
+        ];
+        let mut found = Vec::new();
+        scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &banned, &mut found);
+        assert!(found.is_empty(), "a typed read of an optional text column (use rows::lenient_filename): {found:?}");
+    }
+
+    #[test]
+    fn the_lenient_readers_take_any_type() {
+        use rusqlite::types::ValueRef;
+        assert_eq!(lenient_filename(ValueRef::Null), None);
+        assert_eq!(lenient_filename(ValueRef::Text(b"ab/cd.val")), Some("ab/cd.val".to_owned()));
+        for damaged in
+            [ValueRef::Blob(b"ab/cd.val"), ValueRef::Integer(7), ValueRef::Real(1.5), ValueRef::Text(b"\xff\xfe")]
+        {
+            assert_eq!(lenient_filename(damaged), Some(NOT_A_NAME.to_owned()), "{damaged:?}");
+        }
+        assert!(
+            crate::spill::value_path(std::path::Path::new("/cache"), NOT_A_NAME).is_none(),
+            "it must never be a path"
+        );
+        assert_eq!((lenient_size(ValueRef::Integer(9)), file_size(ValueRef::Integer(9))), (9, 9));
+        for damaged in [ValueRef::Null, ValueRef::Text(b"9"), ValueRef::Real(9.0), ValueRef::Blob(b"9")] {
+            assert_eq!(lenient_size(damaged), 0, "{damaged:?}: nothing for the totals");
+            assert_eq!(file_size(damaged), -1, "{damaged:?}: a size no file has");
+        }
+        // An integer no size can be: negated or summed, it would overflow the totals.
+        assert_eq!(lenient_size(ValueRef::Integer(MAX_SIZE)), MAX_SIZE);
+        for damaged in [-1, i64::MIN, -i64::MAX, MAX_SIZE + 1, i64::MAX] {
+            assert_eq!(lenient_size(ValueRef::Integer(damaged)), 0, "{damaged}");
+        }
+    }
+
+    /// Every `store_seq` in the table that is an integer, in order.
+    fn sound_seqs(conn: &Connection) -> Vec<i64> {
+        let mut stmt =
+            conn.prepare("SELECT store_seq FROM cache WHERE typeof(store_seq) = 'integer' ORDER BY store_seq").unwrap();
+        stmt.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+    }
+
+    /// Plan 32, step 8: one row with a damaged `store_seq` no longer decides every later number.
+    /// Text and BLOBs sort above every number, so `MAX(store_seq) + 1` was 1 for each write after
+    /// it; a large REAL or `i64::MAX` made it a REAL, which the statement's own `RETURNING` then
+    /// failed to read.
+    #[test]
+    fn a_damaged_store_seq_is_left_out_of_the_next_number() {
+        for damage in
+            ["'abc'", "x'0102'", "1e300", "9223372036854775807", "9223372036854775808.0", "4611686018427387904"]
+        {
+            let tmp = TempDir::new("rows-damaged-seq");
+            let mut conn = new_db(&tmp);
+            for key in ["a", "b", "c"] {
+                write(&mut conn, |w| w.upsert(&row(key, b"1")).unwrap());
+            }
+            conn.execute(&format!("UPDATE cache SET store_seq = {damage} WHERE key = 'b'"), []).unwrap();
+            let highest = *sound_seqs(&conn).iter().filter(|seq| **seq < SEQ_CEILING).max().unwrap();
+
+            // New rows, an overwrite and a number updated in place each take a number of their own.
+            let (d, _) = write(&mut conn, |w| w.upsert(&row("d", b"1")).unwrap());
+            let (e, _) = write(&mut conn, |w| w.upsert(&row("e", b"1")).unwrap());
+            let (a, _) = write(&mut conn, |w| w.upsert(&row("a", b"2")).unwrap());
+            assert!(highest < d && d < e && e < a, "{damage}: {highest}, then {d}, {e}, {a}");
+            let id: i64 = conn.query_row("SELECT id FROM cache WHERE key = 'd'", [], |r| r.get(0)).unwrap();
+            conn.execute(UPDATE_NUMBER_SQL, (6, 7, 1.0, id)).unwrap();
+            let in_place: i64 =
+                conn.query_row("SELECT store_seq FROM cache WHERE id = ?1", [id], |r| r.get(0)).unwrap();
+            assert!(in_place > a, "{damage}: the in-place update took {in_place} after {a}");
+
+            // A delete raises the floor to an integer past them all, and the next write is above it.
+            write(&mut conn, |w| w.delete_key("e").unwrap());
+            let floor: i64 = conn.query_row("SELECT next_seq FROM state", [], |r| r.get(0)).unwrap();
+            assert!(floor > in_place, "{damage}: the floor is {floor} after {in_place}");
+            let (f, _) = write(&mut conn, |w| w.upsert(&row("f", b"1")).unwrap());
+            assert!(f >= floor, "{damage}: {f} is under the floor {floor}");
+        }
+    }
+
+    /// A REAL inside the integer range counts as the integer below it, so the next number is above it.
+    #[test]
+    fn a_fractional_store_seq_still_bounds_the_next_number() {
+        let tmp = TempDir::new("rows-fractional-seq");
+        let mut conn = new_db(&tmp);
+        write(&mut conn, |w| w.upsert(&row("a", b"1")).unwrap());
+        conn.execute("UPDATE cache SET store_seq = 1500.5 WHERE key = 'a'", []).unwrap();
+        let (b, _) = write(&mut conn, |w| w.upsert(&row("b", b"1")).unwrap());
+        assert_eq!(b, 1501);
+    }
+
+    /// The ceiling is never handed out: a number there is left out of the next maximum, so every
+    /// write after it would take the same one. The write fails instead, on the column's NOT NULL.
+    #[test]
+    fn a_store_seq_or_floor_at_the_ceiling_fails_the_write_rather_than_repeat() {
+        let top = SEQ_CEILING - 1;
+        for damage in [
+            format!("UPDATE cache SET store_seq = {top} WHERE key = 'a'"),
+            format!("UPDATE state SET next_seq = {SEQ_CEILING}"),
+            "UPDATE state SET next_seq = 9223372036854775807".to_owned(),
+            "UPDATE state SET next_seq = 'abc'".to_owned(),
+            // A REAL below the ceiling came through the scalar MAX as itself, and the in-place
+            // update, which reads nothing back, stored it in the row (Gemini's review, M3).
+            "UPDATE state SET next_seq = 1500.5".to_owned(),
+            "UPDATE state SET next_seq = 1e300".to_owned(),
+            "UPDATE state SET next_seq = x'00'".to_owned(),
+        ] {
+            let tmp = TempDir::new("rows-seq-ceiling");
+            let mut conn = new_db(&tmp);
+            write(&mut conn, |w| w.upsert(&row("a", b"1")).unwrap());
+            let (b, _) = write(&mut conn, |w| w.upsert(&row("b", b"1")).unwrap());
+            conn.execute(&damage, []).unwrap();
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
+            let refused = RowWriter::new(&tx, T).upsert(&row("c", b"1"));
+            assert!(refused.is_err(), "{damage}: a write took {refused:?}");
+            let id: i64 = tx.query_row("SELECT id FROM cache WHERE key = 'b'", [], |r| r.get(0)).unwrap();
+            assert!(tx.execute(UPDATE_NUMBER_SQL, (6, 7, 1.0, id)).is_err(), "{damage}: an in-place update ran");
+            drop(tx);
+            let unchanged: i64 =
+                conn.query_row("SELECT store_seq FROM cache WHERE key = 'b'", [], |r| r.get(0)).unwrap();
+            assert_eq!(unchanged, b, "{damage}");
+        }
+    }
+
+    /// The range keeps the lookup to one seek on the `store_seq` index: its cost doesn't grow with
+    /// the table, nor with how many damaged rows sort above the sound ones. Counted in VM steps,
+    /// which unlike a time can't flake.
+    #[test]
+    fn the_largest_sound_store_seq_is_one_index_seek() {
+        fn steps(conn: &Connection) -> i32 {
+            let mut stmt = conn.prepare(concat!("SELECT ", max_store_seq!())).unwrap();
+            let _: i64 = stmt.query_row([], |r| r.get(0)).unwrap();
+            stmt.get_status(rusqlite::StatementStatus::VmStep)
+        }
+        let tmp = TempDir::new("rows-seq-seek");
+        let mut conn = new_db(&tmp);
+        write(&mut conn, |w| w.upsert(&row("first", b"1")).unwrap());
+        let small = steps(&conn);
+        write(&mut conn, |w| {
+            for n in 0..3000 {
+                w.upsert(&row(&format!("k{n}"), b"1")).unwrap();
+            }
+        });
+        conn.execute("UPDATE cache SET store_seq = 'damaged' || id WHERE id % 3 = 0", []).unwrap();
+        let plan: Vec<String> = conn
+            .prepare(concat!("EXPLAIN QUERY PLAN SELECT ", max_store_seq!()))
+            .unwrap()
+            .query_map([], |r| r.get(3))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert!(
+            plan.iter().any(|line| line.contains("USING COVERING INDEX cache_store_seq (store_seq<?)")),
+            "{plan:?}"
+        );
+        assert_eq!(steps(&conn), small, "the lookup's cost grew with the table");
     }
 }

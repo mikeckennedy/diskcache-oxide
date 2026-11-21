@@ -7,7 +7,7 @@
 //! no user code.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, TryLockError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -25,7 +25,7 @@ use diskcache_oxide_core::schema::{DEFAULT_SIZE_LIMIT, EvictionPolicy, FORMAT_VE
 use diskcache_oxide_core::store::{
     DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, HeldTransaction, OpenOptions, Store,
 };
-use diskcache_oxide_core::{Error, ValueRef, lockwait, spill};
+use diskcache_oxide_core::{Error, ValueRef, gate, lockwait, spill};
 use pyo3::PyTraverseError;
 use pyo3::exceptions::{
     PyException, PyKeyError, PyMemoryError, PyOSError, PyOverflowError, PyRecursionError, PyRuntimeError,
@@ -325,14 +325,19 @@ impl Cache {
 
     /// Removes the caches an older diskcache-oxide format left in this cache's directory (plan 26).
     fn remove_old_formats(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        // It removes files from the directory: not in a child a fork left unable to use the cache.
+        self.handle.store.check_usable().map_err(to_py_err)?;
         remove_old_formats(py, &self.config)
     }
 
     /// `(hits, misses)` of `get` and `cache[key]` in this process, as they were; then resets them
     /// with `reset`, and turns counting on or off with `enable`, as diskcache's `stats()`.
     #[pyo3(signature = (enable = true, reset = false))]
-    fn stats(&self, enable: bool, reset: bool) -> (u64, u64) {
-        self.handle.store.stats().take(enable, reset)
+    fn stats(&self, enable: bool, reset: bool) -> PyResult<(u64, u64)> {
+        // In memory, but counts of calls that can only raise mean nothing: a cache a fork made
+        // unusable says so here too (plan 32, decision 5).
+        self.handle.store.check_usable().map_err(to_py_err)?;
+        Ok(self.handle.store.stats().take(enable, reset))
     }
 
     /// Reads `size_limit`, `cull_limit` or `eviction_policy` as stored now, or with `value` persists
@@ -666,7 +671,11 @@ impl Cache {
         retry: bool,
     ) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
-        let Some(encoded) = codec::key::encode_tag(Some(tag))? else { return Ok(0) };
+        let Some(encoded) = codec::key::encode_tag(Some(tag))? else {
+            // Nothing to remove, but a cache a fork made unusable still says so (plan 32).
+            self.handle.store.check_usable().map_err(to_py_err)?;
+            return Ok(0);
+        };
         let tag = encoded.key();
         if retry {
             return self
@@ -1282,8 +1291,8 @@ impl HandleConfig {
         wants: Wants,
     ) -> PyResult<Py<PyAny>> {
         let now = self.now(py)?;
-        // In a child that can't write (D-020) a read could report a miss; a pop fails.
-        let ready = handle.run(self.timeout, |timeout| handle.store.check_writable().map(|()| timeout));
+        // In a child that can't use this cache (D-020), fail before the read rather than at its lease.
+        let ready = handle.run(self.timeout, |timeout| handle.store.check_usable().map(|()| timeout));
         let popped = match self.attempt(py, &handle.store, Op::Pop, now, ready)? {
             Some(timeout) => self.pop_value(py, handle, key, now, timeout, wants.tag)?,
             None => None,
@@ -1517,8 +1526,8 @@ impl HandleConfig {
         wants: Wants,
     ) -> PyResult<Py<PyAny>> {
         let now = self.now(py)?;
-        // In a child that can't write (D-020) a read could see an item; a pull fails.
-        let ready = handle.run(self.timeout, |timeout| handle.store.check_writable().map(|()| timeout));
+        // In a child that can't use this cache (D-020), fail before the read rather than at its lease.
+        let ready = handle.run(self.timeout, |timeout| handle.store.check_usable().map(|()| timeout));
         let found = match self.attempt(py, &handle.store, Op::Pull, now, ready)? {
             Some(timeout) => self.pull_item(py, handle, range, side, now, timeout, wants.tag)?,
             None => None,
@@ -2093,12 +2102,18 @@ pub(crate) fn findings_to_warnings(
                 (format!("wrong file size: {}, {actual} != {expected}", path.display()), &user)
             }
             Finding::BadFilename { name, .. } => (format!("damaged file name in a row: {name:?}"), &user),
+            Finding::BadColumn { id, column, found, .. } => {
+                (format!("damaged row {id}: its {column} is stored as {found}"), &user)
+            }
             Finding::UnknownFile { path, .. } => (format!("unknown file: {}", path.display()), &unknown),
             Finding::Count { stored, actual, .. } => {
                 (format!("Settings.count != COUNT(Cache.key); {stored} != {actual}"), &user)
             }
             Finding::Size { stored, actual, .. } => {
                 (format!("Settings.size != SUM(Cache.size); {stored} != {actual}"), &user)
+            }
+            Finding::BadState { column, found, .. } => {
+                (format!("damaged cache state: its {column} is stored as {found}"), &user)
             }
         };
         let message = category.call1((text,))?;
@@ -2260,6 +2275,9 @@ pub(crate) struct Transaction {
     state: Mutex<TxState>,
     /// Notified when `Ending` becomes `Done`.
     ended: Condvar,
+    /// The process generation `__enter__` began in, plus one (0 until then), and never cleared:
+    /// the transaction is single use. Read without the mutex, see [`Transaction::crossed_a_fork`].
+    entered_in: AtomicU64,
 }
 
 impl Transaction {
@@ -2273,11 +2291,40 @@ impl Transaction {
     }
 
     fn with(cache: TxCache, retry: bool) -> Self {
-        Self { cache, retry, state: Mutex::new(TxState::Ready), ended: Condvar::new() }
+        Self { cache, retry, state: Mutex::new(TxState::Ready), ended: Condvar::new(), entered_in: AtomicU64::new(0) }
+    }
+
+    /// Whether this process was forked after the transaction was entered: it is then the parent's
+    /// (D-020). Another thread may have been ending it at the fork, or waiting for that end, and
+    /// neither exists here: the end never finishes, and the state mutex may have been inherited
+    /// locked (`wait_for_end` holds it detached, also for a moment after the end is done). So this
+    /// is checked before the mutex is touched, and the mutex is then only ever tried
+    /// ([`Transaction::state_after_fork`]). In a child whose after-fork hook hasn't run yet
+    /// (another library's got there first) the generation is brought up to date first.
+    fn crossed_a_fork(&self) -> bool {
+        let entered_in = self.entered_in.load(Ordering::Acquire);
+        if entered_in == 0 {
+            return false;
+        }
+        gate::catch_up_in_child();
+        entered_in != gate::generation().wrapping_add(1)
     }
 
     fn lock_state(&self) -> std::sync::MutexGuard<'_, TxState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The state in a process forked after the transaction was entered, without waiting: `None` if
+    /// the mutex is locked, which there means a thread of the parent's held it at the fork. Two of
+    /// the child's own threads on one inherited transaction can meet here too; the loser then reads
+    /// it as lost to the fork, which is the answer for every such transaction but one fully ended
+    /// before the fork on a cache the child can still use.
+    fn state_after_fork(&self) -> Option<std::sync::MutexGuard<'_, TxState>> {
+        match self.state.try_lock() {
+            Ok(state) => Some(state),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        }
     }
 
     /// Begins the transaction, or joins the one this thread already holds on the store. Never
@@ -2333,19 +2380,30 @@ impl Transaction {
     }
 
     fn __repr__(&self) -> String {
+        // Never a wait for the mutex in a child that may have inherited it locked.
+        let state = if self.crossed_a_fork() {
+            self.state_after_fork().map_or(TxState::Ending.name(), |state| state.name())
+        } else {
+            self.lock_state().name()
+        };
         match &self.cache {
-            TxCache::Plain(_) => format!("<diskcache_oxide.Transaction {}>", self.lock_state().name()),
-            TxCache::Shard(_, shard) => {
-                format!("<diskcache_oxide.Transaction {} on shard {shard}>", self.lock_state().name())
-            }
+            TxCache::Plain(_) => format!("<diskcache_oxide.Transaction {state}>"),
+            TxCache::Shard(_, shard) => format!("<diskcache_oxide.Transaction {state} on shard {shard}>"),
         }
     }
 
     fn __enter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if self.crossed_a_fork() {
+            // Never the mutex in a child that may have inherited it locked; it was entered, in the parent.
+            return Err(PyRuntimeError::new_err("a transaction can be entered only once"));
+        }
         {
             let mut state = self.lock_state();
             match *state {
-                TxState::Ready => *state = TxState::Entering,
+                TxState::Ready => {
+                    self.entered_in.store(gate::generation().wrapping_add(1), Ordering::Release);
+                    *state = TxState::Entering;
+                }
                 TxState::Entering => {
                     return Err(PyRuntimeError::new_err("this transaction is already being entered on another thread"));
                 }
@@ -2362,6 +2420,7 @@ impl Transaction {
             }
             Err(error) => {
                 *state = TxState::Ready;
+                self.entered_in.store(0, Ordering::Release);
                 Err(error)
             }
         }
@@ -2376,7 +2435,18 @@ impl Transaction {
         _traceback: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         let commit = exc_type.is_none();
-        let mut state = self.lock_state();
+        // Entered in the parent, and this is a child: the mutex is tried, never waited for, and what
+        // another thread was doing to the transaction at the fork is lost, at once rather than
+        // after the timeout (an end that can't finish here, an entry that can't either).
+        let crossed = self.crossed_a_fork();
+        let mut state = if crossed {
+            self.state_after_fork().ok_or_else(|| to_py_err(Error::ForkPoisoned))?
+        } else {
+            self.lock_state()
+        };
+        if crossed && matches!(*state, TxState::Entering | TxState::Ending) {
+            return Err(to_py_err(Error::ForkPoisoned));
+        }
         let taken = match &*state {
             TxState::Ready => return Err(PyRuntimeError::new_err("this transaction was never entered")),
             TxState::Entering => {
@@ -2384,6 +2454,12 @@ impl Transaction {
             }
             // A second exit, or the owner's exit after another thread ended it.
             TxState::Done { committed } => {
+                // Ended in the parent before the fork, by another thread, with its connection still
+                // out (parked, or lent to the call that forked): the child can't use the cache, and
+                // leaving the inherited block says so, whatever the parent's end came to (D-020).
+                if crossed {
+                    self.cache.handle().store.check_usable().map_err(to_py_err)?;
+                }
                 if commit && !*committed {
                     return Err(not_committed());
                 }
@@ -2405,6 +2481,13 @@ impl Transaction {
                 };
             }
             TxState::PassThrough => {
+                // A nested block inherited across a fork: if the transaction it joined was still
+                // open at the fork, its connection was too, and the child can't use the cache; this
+                // exit says so rather than report a commit (D-020). If that transaction had ended
+                // before the fork, the cache works here and so does this exit.
+                if crossed {
+                    self.cache.handle().store.check_usable().map_err(to_py_err)?;
+                }
                 *state = TxState::Done { committed: true };
                 return Ok(false);
             }
@@ -2414,7 +2497,10 @@ impl Transaction {
         let TxState::Held(held) = taken else { unreachable!("only `Held` is taken") };
         // Outside the mutex: a commit may wait (detached) for the owner's operation.
         let result = held.finish(commit);
-        *self.lock_state() = TxState::Done { committed: commit && result.is_ok() };
+        {
+            let mut state = self.lock_state();
+            *state = TxState::Done { committed: commit && result.is_ok() };
+        }
         self.ended.notify_all();
         result.map_err(to_py_err)?;
         Ok(false)
@@ -2550,9 +2636,14 @@ enum Failure {
 }
 
 fn classify(py: Python<'_>, mode: i64, e: &PyErr) -> Failure {
-    if !e.is_instance_of::<PyException>(py) || e.is_instance_of::<crate::UnsafeValueError>(py) {
-        // KeyboardInterrupt and friends; and a pickle on a pickle=False handle, a configuration
-        // bug that a miss would hide on every read.
+    if !e.is_instance_of::<PyException>(py)
+        || e.is_instance_of::<crate::UnsafeValueError>(py)
+        || e.is_instance_of::<crate::ForkedInsideTransactionError>(py)
+    {
+        // KeyboardInterrupt and friends; a pickle on a pickle=False handle, a configuration bug
+        // that a miss would hide on every read; and a hook that called a cache this process can't
+        // use after a fork (D-020), which says nothing about this row's bytes: deleting the row
+        // for it would empty a healthy cache one read at a time.
         Failure::Passthrough
     } else if e.is_instance_of::<crate::ForeignValueError>(py) {
         Failure::Foreign
@@ -2835,13 +2926,22 @@ fn pull_backoff(py: Python<'_>, losses: u32, left: Duration) -> PyResult<()> {
     Ok(())
 }
 
-/// An `incr`/`decr` operand: an exact int (fits 64 bits) or a float.
+/// An `incr`/`decr` operand: an exact int (fits 64 bits) or a finite float.
+///
+/// An infinity or a NaN is refused (D-064). With them a counter could reach NaN (`inf` then `-inf`,
+/// or a NaN operand), which SQLite stores as NULL: a row with no value, unreadable from then on.
+/// With finite operands it can't: a sum that overflows is an infinity, and an infinity plus a
+/// finite number stays that infinity.
 fn number(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Number> {
     if value.is_exact_instance_of::<PyInt>() {
         return value.extract::<i64>().map(Number::Int);
     }
     if value.is_exact_instance_of::<PyFloat>() {
-        return value.extract::<f64>().map(Number::Real);
+        let real = value.extract::<f64>()?;
+        if !real.is_finite() {
+            return Err(PyValueError::new_err(format!("{name} must be a finite number, not {real}")));
+        }
+        return Ok(Number::Real(real));
     }
     Err(PyTypeError::new_err(format!("{name} must be an int or float, not {}", value.get_type().name()?)))
 }

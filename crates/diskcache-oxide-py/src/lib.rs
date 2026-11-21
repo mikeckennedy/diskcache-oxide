@@ -59,6 +59,13 @@ create_exception!(
 );
 create_exception!(
     diskcache_oxide,
+    ForkedInsideTransactionError,
+    PyRuntimeError,
+    "This process was forked while a connection to the cache was open (inside a transaction, or from a hook \
+     running inside a cache call), so it can't use that cache: every call on it raises this."
+);
+create_exception!(
+    diskcache_oxide,
     CorruptValueError,
     PyValueError,
     "A stored value couldn't be decoded: an unknown mode, or bytes that don't parse."
@@ -146,12 +153,10 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
             Some(code) => os_error(code, message),
             None => PyOSError::new_err(message),
         },
-        Error::Unwritable
-        | Error::ForkPoisoned
-        | Error::NestedTransaction
-        | Error::InsideTransaction(_)
-        | Error::NoTransaction
-        | Error::EndInsideOperation => PyRuntimeError::new_err(message),
+        Error::Unusable | Error::ForkPoisoned => ForkedInsideTransactionError::new_err(message),
+        Error::NestedTransaction | Error::InsideTransaction(_) | Error::NoTransaction | Error::EndInsideOperation => {
+            PyRuntimeError::new_err(message)
+        }
         Error::TransactionAborted => TransactionAborted::new_err(message),
         Error::FormatMismatch { .. } | Error::ManifestInvalid { .. } => FormatMismatchError::new_err(message),
         Error::RoleMismatch { .. } | Error::ShardCountMismatch { .. } | Error::StoredShardsRefuseSettings { .. } => {
@@ -239,7 +244,35 @@ fn _after_fork_in_parent(py: Python<'_>) {
 #[pyfunction]
 fn _after_fork_in_child(py: Python<'_>) {
     gate::end_fork_child();
+    warn_unusable(py);
     drain_deferred_releases(py);
+}
+
+/// One warning on the `diskcache_oxide` logger, in a child the fork left unable to use a cache: it
+/// inherited an open connection to it (plan 32, D-020). Logged here, not where the scan runs, which
+/// can be inside a gate entry with the interpreter released.
+fn warn_unusable(py: Python<'_>) {
+    if !diskcache_oxide_core::poison::take_newly_unusable() {
+        return;
+    }
+    let which = if diskcache_oxide_core::poison::all_unusable() {
+        "any cache".to_owned()
+    } else {
+        let directories: Vec<String> = store::unusable_directories().iter().map(|d| d.display().to_string()).collect();
+        if directories.is_empty() { "a cache".to_owned() } else { directories.join(", ") }
+    };
+    // Never raised into the fork: a logging failure is dropped.
+    let _ = cache::logger(py).and_then(|log| {
+        log.call_method1(
+            "warning",
+            (
+                "this process was forked while a connection to a cache was open (inside a transaction, or from a \
+                 hook running inside a cache call), so it can't use %s: every call on it raises RuntimeError. Fork \
+                 outside the transaction, or start the process with spawn or forkserver.",
+                which,
+            ),
+        )
+    });
 }
 
 /// Releases the handles closed behind the fork that just ended. One atomic load unless there are
@@ -495,6 +528,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_sqlite_mutex_status, m)?)?;
     m.add("FormatMismatchError", py.get_type::<FormatMismatchError>())?;
     m.add("LayoutMismatchError", layout_mismatch_type(py)?)?;
+    m.add("ForkedInsideTransactionError", py.get_type::<ForkedInsideTransactionError>())?;
     m.add_class::<cache::Cache>()?;
     m.add_class::<cache::FanoutCache>()?;
     m.add_class::<cache::Transaction>()?;

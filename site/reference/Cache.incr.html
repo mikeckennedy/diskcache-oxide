@@ -505,7 +505,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-19">v0.4.7</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-21">v0.5.8</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -537,7 +537,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="19" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="20" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -2136,6 +2136,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/ForkedInsideTransactionError.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">ForkedInsideTransactionError</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/TransactionAborted.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">TransactionAborted</span></a>
   </div>
@@ -2356,7 +2362,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L581-L612" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L590-L622" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Cache</span><span class="op">.</span><span class="sig-name">incr</span>(
@@ -2380,11 +2386,11 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><code><span class="doc-parameter-name">delta</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">float</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">…</span></code></dt>
 <dd>
-<p>The amount to add (default 1).</p>
+<p>The amount to add (default 1). An int or a finite float.</p>
 </dd>
 <dt><code><span class="doc-parameter-name">default</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[float]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">…</span></code></dt>
 <dd>
-<p>The starting value for a missing or expired key (default 0). Pass None to raise <code>KeyError</code> instead.</p>
+<p>The starting value for a missing or expired key (default 0), an int or a finite float. Pass None to raise <code>KeyError</code> instead.</p>
 </dd>
 <dt><code><span class="doc-parameter-name">retry</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">bool</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default"><span class="va">False</span></span></code></dt>
 <dd>
@@ -2417,6 +2423,10 @@ get the same one.
 <dt><code> <span class="doc-parameter-annotation">TypeError</span></code></dt>
 <dd>
 <p>The stored value isn’t a number.</p>
+</dd>
+<dt><code> <span class="doc-parameter-annotation">ValueError</span></code></dt>
+<dd>
+<p><code>delta</code> or <code>default</code> is an infinity or a NaN. Nothing is read or written.</p>
 </dd>
 <dt><code> <span class="doc-parameter-annotation">Timeout</span></code></dt>
 <dd>

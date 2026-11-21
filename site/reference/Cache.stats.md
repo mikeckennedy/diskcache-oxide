@@ -15,3 +15,10 @@ Cache.stats(
 
 
 Returns the counts as they were, then resets them if [reset](Cache.reset.md#diskcache_oxide.Cache.reset), then turns counting on or off with [enable](Caches.enable.md#diskcache_oxide.Caches.enable) (off by default). Counted per process and in memory, never in the database, so a read never writes: other processes' lookups aren't included, the counts start from zero when the process (or a forked child) starts, and every handle on one directory in a process shares them. `in`, [pop](Cache.pop.md#diskcache_oxide.Cache.pop) and iteration don't count; a durable outage answered as a miss counts as nothing. A [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache) sums its shards.
+
+
+## Raises
+
+
+`ForkedInsideTransactionError`  
+This process is a child that a fork left unable to use this cache (D-020).

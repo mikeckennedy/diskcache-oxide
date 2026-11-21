@@ -117,6 +117,8 @@ reg.register(ObjectId, name='bson.ObjectId', encode=lambda o: o.binary, decode=O
 cache = Cache('/var/cache/my-app-binary-ids', types=reg)
 ```
 
+Give a class its own name in that registry. If it uses a name the global registry has for a different class, a value of the global class can't be stored through that cache: it would be written under the shared name and read back as the other class, so `set()` raises `TypeError` and names both. Reading has no such check: a row another handle stored under that name is decoded by whatever this handle's registry has for it.
+
 Two processes with different registrations on one directory write rows the other can't read, the same way two processes with different `serializer=` settings would. Register at import time, the same way everywhere.
 
 ## Why pickle is off by default

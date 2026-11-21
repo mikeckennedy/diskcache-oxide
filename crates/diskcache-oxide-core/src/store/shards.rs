@@ -72,6 +72,16 @@ impl Store {
             std::fs::metadata(crate::open::db_path(&o.directory)).is_ok_and(|meta| meta.is_file() && meta.len() > 0)
         };
         let (existing, new): (Vec<usize>, Vec<usize>) = (0..options.len()).partition(|&i| has_content(&options[i]));
+        // Every shard, before any is opened or joined: joining a live shard writes the limits this
+        // open passed, so in a child that can't use shard k (plan 32, D-020) the shards before it
+        // would otherwise be changed, on disk and for the parent, before k refused. Under a gate
+        // level, so a child's after-fork scan has run; what's unusable never changes after that.
+        {
+            let _gate = super::enter_until(deadline)?;
+            for shard in &options {
+                super::check_usable_at(&crate::open::db_path(&shard.directory))?;
+            }
+        }
         let mut opened: Vec<Option<Arc<Self>>> = vec![None; options.len()];
         for index in existing.into_iter().chain(new) {
             match Self::open_until(&options[index], deadline) {
@@ -397,5 +407,29 @@ mod tests {
             assert_eq!(store.settled_handles(), 0);
             assert!(store.is_retired());
         }
+    }
+
+    /// Gemini's review of plan 32, H2: a reopen with new limits in a process that can't use shard 2
+    /// (a child forked inside a transaction on it) changes no shard. It used to join shards 0 and
+    /// 1 first, writing the new limits to both, on disk, before shard 2 refused.
+    #[test]
+    fn a_reopen_with_one_shard_unusable_changes_no_other_shard() {
+        let tmp = TempDir::new("shards-one-unusable");
+        let stores = open(&base(tmp.path()), Some(4)).unwrap();
+        let before: Vec<Limits> = stores.iter().map(|s| s.read_limits(T).unwrap()).collect();
+        let handles: Vec<isize> = stores.iter().map(|s| s.settled_handles()).collect();
+        let unusable = stores[2].unusable_for_test();
+        let mut changed = base(tmp.path());
+        changed.requested = Requested {
+            size_limit: Some(64 << 20),
+            cull_limit: Some(3),
+            eviction_policy: Some(crate::schema::EvictionPolicy::None),
+        };
+        assert!(matches!(open(&changed, Some(4)), Err(Error::Unusable)));
+        drop(unusable);
+        let after: Vec<Limits> = stores.iter().map(|s| s.read_limits(T).unwrap()).collect();
+        assert_eq!(after, before, "a shard's limits changed before the unusable one refused");
+        assert_eq!(stores.iter().map(|s| s.settled_handles()).collect::<Vec<_>>(), handles);
+        close(&stores);
     }
 }

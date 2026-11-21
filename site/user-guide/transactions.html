@@ -479,7 +479,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-19">v0.4.7</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-21">v0.5.8</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -511,7 +511,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="19" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="20" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -789,7 +789,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="transactions-and-forks" class="level1">
 <h1>Transactions and forks</h1>
-<p>A fork waits for every transaction other threads hold, with no timeout, so the child never inherits half of one (D-012). A long transaction holds up every fork in the process while it’s open, and calls behind that fork time out (see <a href="../user-guide/concurrency-and-forks.html#how-long-a-call-waits-for-a-fork">How long a call waits for a fork</a>). Forking from inside your own transaction can’t be waited for: the child’s copy is poisoned and raises <code>RuntimeError</code> (see <a href="../user-guide/concurrency-and-forks.html#forking-from-inside-your-own-transaction">Forking from inside your own transaction</a>).</p>
+<p>A fork waits for every transaction other threads hold, with no timeout, so the child never inherits half of one (D-012). A long transaction holds up every fork in the process while it’s open, and calls behind that fork time out (see <a href="../user-guide/concurrency-and-forks.html#how-long-a-call-waits-for-a-fork">How long a call waits for a fork</a>). Forking from inside your own transaction can’t be waited for: the child can’t use that cache at all, and every call on it there raises <code>RuntimeError</code> (see <a href="../user-guide/concurrency-and-forks.html#forking-from-inside-your-own-transaction">Forking from inside your own transaction</a>).</p>
 </section>
 <section id="typing-transactionalcachelike" class="level1">
 <h1>Typing: <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a></h1>

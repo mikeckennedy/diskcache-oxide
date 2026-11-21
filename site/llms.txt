@@ -223,50 +223,50 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 #### DjangoCache
 > diskcache-oxide as a Django cache backend: 'BACKEND': 'diskcache_oxide.DjangoCache'.
 
-- [DjangoCache](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.html): A Django cache backend on a diskcache-oxide `Cache` (or a `FanoutCache` with `OPTIONS['shards']`)
+- [DjangoCache](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.html)
 
 #### DjangoCache Methods
 > Methods for the DjangoCache class
 
-- [DjangoCache.cache](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.cache.html): The `Cache` (or `FanoutCache`) under this backend, shared by every alias on its directory
-- [DjangoCache.make_and_validate_key](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.make_and_validate_key.html): The key as stored (`prefix:version:key`), checked by `validate_key`
-- [DjangoCache.validate_key](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.validate_key.html): Warn (`CacheKeyWarning`) about a key memcached couldn't store, as every Django backend does
-- [DjangoCache.get_backend_timeout](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.get_backend_timeout.html): Seconds from now, or None for forever. Zero or less means "don't store it", as in Django
-- [DjangoCache.add](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.add.html): Django's `add`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`
-- [DjangoCache.get](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.get.html): The value, or `default` on a miss (a stored None is returned as None)
-- [DjangoCache.set](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.set.html): Django's `set`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`
-- [DjangoCache.touch](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.touch.html): Give the key a new timeout. Returns whether it was there
-- [DjangoCache.delete](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.delete.html): Delete the key. Returns whether it was there
-- [DjangoCache.has_key](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.has_key.html): Whether the key is there and unexpired
-- [DjangoCache.incr](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.incr.html): Add `delta` atomically, across threads and processes, keeping the entry's expiry
-- [DjangoCache.decr](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.decr.html): Subtract `delta` atomically, as `incr` adds it
-- [DjangoCache.get_many](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.get_many.html): The keys that are there, with their values; a stored None is returned
-- [DjangoCache.set_many](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.set_many.html): A `set` per key, not one transaction: a value's pickling can run arbitrary code (load a
-- [DjangoCache.delete_many](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.delete_many.html): Delete the keys, up to `DELETE_CHUNK` at a time in one transaction (one per shard on a
-- [DjangoCache.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.clear.html): Remove every entry in the directory: every alias, prefix and version on this `LOCATION`
-- [DjangoCache.close](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.close.html): Nothing: Django calls it after every request, and the handle lives for the process
-- [DjangoCache.pop](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.pop.html): Remove the key and return its value, or `default` if it's missing, atomically
-- [DjangoCache.evict](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.evict.html): Remove every entry tagged `tag` (with `set(..., tag=)` or `add(..., tag=)`). Returns how many
-- [DjangoCache.expire](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.expire.html): Remove expired entries now, rather than waiting for background maintenance. Returns how many
-- [DjangoCache.cull](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.cull.html): Remove expired entries, then evict until the cache is under `size_limit`. Returns how many
-- [DjangoCache.stats](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.stats.html): `(hits, misses)` since counting was enabled; see `Cache.stats`
-- [DjangoCache.maintenance_stats](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.maintenance_stats.html): What background maintenance has done; see `Cache.maintenance_stats`
-- [DjangoCache.check](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.check.html): Check the cache's consistency, returning the problems as warnings; see `Cache.check`
-- [DjangoCache.aadd](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aadd.html): `add`, run in one `sync_to_async` call
-- [DjangoCache.aget](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aget.html): `get`, run in one `sync_to_async` call
-- [DjangoCache.aset](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aset.html): `set`, run in one `sync_to_async` call
-- [DjangoCache.atouch](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.atouch.html): `touch`, run in one `sync_to_async` call
-- [DjangoCache.adelete](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.adelete.html): `delete`, run in one `sync_to_async` call
-- [DjangoCache.ahas_key](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.ahas_key.html): `has_key`, run in one `sync_to_async` call
-- [DjangoCache.aincr](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aincr.html): `incr`, run in one `sync_to_async` call
-- [DjangoCache.adecr](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.adecr.html): `decr`, run in one `sync_to_async` call
-- [DjangoCache.aget_many](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aget_many.html): `get_many`, run in one `sync_to_async` call
-- [DjangoCache.aset_many](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aset_many.html): `set_many`, run in one `sync_to_async` call
-- [DjangoCache.adelete_many](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.adelete_many.html): `delete_many`, run in one `sync_to_async` call
-- [DjangoCache.aclear](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aclear.html): `clear`, run in one `sync_to_async` call
-- [DjangoCache.aclose](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aclose.html): Nothing, without a thread hop: `close()` does nothing
-- [DjangoCache.open_handle](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.open_handle.html): Open this directory's handle and share it (or a durable alias's NullCache)
-- [DjangoCache.serve_null](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.serve_null.html): Record a durable alias's failed open and log it. Used by `open_handle`; not called directly
+- [DjangoCache.cache](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.cache.html)
+- [DjangoCache.make_and_validate_key](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.make_and_validate_key.html)
+- [DjangoCache.validate_key](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.validate_key.html)
+- [DjangoCache.get_backend_timeout](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.get_backend_timeout.html)
+- [DjangoCache.add](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.add.html)
+- [DjangoCache.get](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.get.html)
+- [DjangoCache.set](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.set.html)
+- [DjangoCache.touch](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.touch.html)
+- [DjangoCache.delete](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.delete.html)
+- [DjangoCache.has_key](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.has_key.html)
+- [DjangoCache.incr](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.incr.html)
+- [DjangoCache.decr](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.decr.html)
+- [DjangoCache.get_many](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.get_many.html)
+- [DjangoCache.set_many](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.set_many.html)
+- [DjangoCache.delete_many](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.delete_many.html)
+- [DjangoCache.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.clear.html)
+- [DjangoCache.close](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.close.html)
+- [DjangoCache.pop](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.pop.html)
+- [DjangoCache.evict](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.evict.html)
+- [DjangoCache.expire](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.expire.html)
+- [DjangoCache.cull](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.cull.html)
+- [DjangoCache.stats](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.stats.html)
+- [DjangoCache.maintenance_stats](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.maintenance_stats.html)
+- [DjangoCache.check](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.check.html)
+- [DjangoCache.aadd](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aadd.html)
+- [DjangoCache.aget](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aget.html)
+- [DjangoCache.aset](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aset.html)
+- [DjangoCache.atouch](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.atouch.html)
+- [DjangoCache.adelete](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.adelete.html)
+- [DjangoCache.ahas_key](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.ahas_key.html)
+- [DjangoCache.aincr](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aincr.html)
+- [DjangoCache.adecr](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.adecr.html)
+- [DjangoCache.aget_many](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aget_many.html)
+- [DjangoCache.aset_many](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aset_many.html)
+- [DjangoCache.adelete_many](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.adelete_many.html)
+- [DjangoCache.aclear](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aclear.html)
+- [DjangoCache.aclose](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.aclose.html)
+- [DjangoCache.open_handle](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.open_handle.html)
+- [DjangoCache.serve_null](https://mkennedy.codes/docs/diskcache-oxide/reference/DjangoCache.serve_null.html)
 
 #### Caches
 > A registry of named caches under one base directory.
@@ -308,6 +308,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [ForeignValueError](https://mkennedy.codes/docs/diskcache-oxide/reference/ForeignValueError.html): A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote
 - [FormatMismatchError](https://mkennedy.codes/docs/diskcache-oxide/reference/FormatMismatchError.html): A database or manifest in a format this version doesn't support, where opening the cache's
 - [LayoutMismatchError](https://mkennedy.codes/docs/diskcache-oxide/reference/LayoutMismatchError.html): The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or shard, a
+- [ForkedInsideTransactionError](https://mkennedy.codes/docs/diskcache-oxide/reference/ForkedInsideTransactionError.html): This process can't use the cache: it's the child of a fork that happened while a connection to
 - [TransactionAborted](https://mkennedy.codes/docs/diskcache-oxide/reference/TransactionAborted.html): A held transaction didn't commit and can't: it was rolled back (after an error inside it, or by another thread
 - [CorruptKeyError](https://mkennedy.codes/docs/diskcache-oxide/reference/CorruptKeyError.html): A stored key couldn't be read: its bytes aren't a key this build wrote (a damaged page or file). Raised by
 - [UnknownFileWarning](https://mkennedy.codes/docs/diskcache-oxide/reference/UnknownFileWarning.html): `check()` found a file in a cache directory that no entry names (removed with `fix=True` when

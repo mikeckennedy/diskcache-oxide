@@ -1,16 +1,25 @@
-//! The D-020 poison registry: which databases this process can never write, keyed by inode.
+//! The D-020 poison registry: which databases this process can never use, keyed by inode.
 //!
-//! A thread that holds a write transaction across calls (a *hold*) records the database's
-//! [`FileId`] here for as long as the transaction is open. When the process forks, the child copies
-//! every live hold into its poisoned set (`poison_live_holds`, run by the after-fork hook in the
-//! child). SQLite's per-process lock table, inherited by the child, still records those write
-//! locks, and releasing them in the child would corrupt the parent's transactions, so the child can
-//! never write to those databases. Write paths call [`check_writable`] and fail at once with
-//! [`Error::Unwritable`] instead of waiting out their timeout.
+//! SQLite keeps one lock record per database file per process, and `fork()` copies the record to
+//! the child but not the kernel locks behind it. A child that inherits an *open connection* to a
+//! file therefore holds, by SQLite's account, locks the kernel never gave it: a new connection
+//! there takes none. Once the parent closes, its reads go stale and its writes are lost, with no
+//! error; and with a write transaction open at the fork, releasing the "locks" in the child would
+//! corrupt the parent's transaction. So such a child can't use that database at all (plan 32).
 //!
-//! The check is by inode, not by store, because SQLite's lock table is per inode: a fresh store on
-//! the same file in the child is poisoned too. A grandchild inherits the poisoned set and adds the
-//! holds live when it was forked.
+//! Two things mark a file, both in the child's after-fork hook:
+//!
+//! - A thread that holds a write transaction across calls (a *hold*) records the database's
+//!   [`FileId`] here for as long as the transaction is open, and the child marks every live hold
+//!   (`poison_live_holds`). This half is atomics only, so it never depends on a mutex.
+//! - The pool scan ([`crate::pool`]) marks every file a pool still has a connection on: a lease
+//!   live at the fork, or anything left open by a fork whose before-hook never ran.
+//!
+//! [`check_usable`] then fails with [`Error::Unusable`] wherever a connection would be opened or
+//! leased, and write paths call it first so they fail at once instead of waiting out a timeout.
+//!
+//! The check is by inode, not by store, because SQLite's lock record is per inode: a fresh store on
+//! the same file in the child is refused too. A grandchild inherits the set and adds to it.
 //!
 //! # Across `fork()`
 //!
@@ -19,8 +28,8 @@
 //! - holds are added under the gate (the [`SharedGuard`] argument is the proof), by a thread whose
 //!   level the fork waits for, so a child never sees a half-written entry;
 //! - a hold is removed with one atomic store, from any thread;
-//! - the poisoned set is only added to in the child's after-fork hook, while the forking thread is
-//!   the only one, and is only ever added to (tests aside: `poison_for_test`'s entry goes when its
+//! - the unusable set is only added to in the child's after-fork hook, while the forking thread is
+//!   the only one, and is only ever added to (tests aside: `unusable_for_test`'s entry goes when its
 //!   guard drops).
 
 use std::sync::OnceLock;
@@ -46,25 +55,81 @@ pub fn begin_hold(gate: &SharedGuard<'_>, id: FileId) -> HoldGuard<'static> {
     REGISTRY.begin_hold(gate, id)
 }
 
-/// Fails with [`Error::Unwritable`] if this process was forked while some thread held a write
-/// transaction on `id` (or descends from one that was). One relaxed load in a process that wasn't.
+/// Fails with [`Error::Unusable`] if this process was forked while a connection to `id` was open
+/// (or descends from one that was): see the module docs. One relaxed load in a process that wasn't.
+///
+/// Only a check made under a gate level is final: in a child, the first gate entry is what runs
+/// the after-fork scan when another library's `after_in_child` hook gets there before ours.
 #[inline]
-pub fn check_writable(id: FileId) -> Result<()> {
-    REGISTRY.check_writable(id)
+pub fn check_usable(id: FileId) -> Result<()> {
+    REGISTRY.check_usable(id)
 }
 
-/// The after-fork hook in the child: poisons every database a hold was live on at the fork. Call
-/// it only while the calling thread is the only one in the process.
+/// Like [`check_usable`], for a path whose file may not exist yet (`None`): a nonexistent file
+/// passes unless every database in this process is unusable ([`all_unusable`]).
+#[inline]
+pub(crate) fn check_usable_opt(id: Option<FileId>) -> Result<()> {
+    REGISTRY.check_usable_opt(id)
+}
+
+/// The after-fork hook in the child: `id` had a connection open at the fork. Call it only while
+/// the calling thread is the only one in the process.
+pub(crate) fn mark_unusable(id: FileId) {
+    REGISTRY.mark_unusable(id);
+}
+
+/// The after-fork hook in the child, when it can't tell which files had a connection open (the pool
+/// registry was inherited locked): no database is usable in this process.
+pub(crate) fn mark_all_unusable() {
+    REGISTRY.mark_all_unusable();
+}
+
+/// Whether a file was marked unusable since the last call, for the hook's one log line.
+pub fn take_newly_unusable() -> bool {
+    REGISTRY.newly_unusable.swap(false, Ordering::AcqRel)
+}
+
+/// Whether no database is usable in this process: the after-fork scan couldn't tell which files
+/// had a connection open.
+#[must_use]
+pub fn all_unusable() -> bool {
+    REGISTRY.all_unusable.load(Ordering::Acquire)
+}
+
+#[cfg(test)]
+std::thread_local! {
+    /// For a test of the opens' wiring: [`refuse_if_nothing_is_usable`] refuses on this thread, as
+    /// it would in a child whose scan failed (the real flag is process-wide and never cleared).
+    pub(crate) static PRETEND_NOTHING_IS_USABLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Fails with [`Error::Unusable`] when no database is usable in this process ([`all_unusable`]),
+/// for an open to call before it creates a directory or a file: such a child leaves nothing behind
+/// at a path that didn't exist. Needs no gate level: like `Store::check_usable`, it runs the
+/// child-side reset first when another library's after-fork hook got there before ours. Only the
+/// forking thread is covered that early; any other thread is refused by the check under the gate
+/// that every open makes before it connects (`store::check_usable_at`).
+pub(crate) fn refuse_if_nothing_is_usable() -> Result<()> {
+    crate::gate::catch_up_in_child();
+    #[cfg(test)]
+    if PRETEND_NOTHING_IS_USABLE.get() {
+        return Err(Error::Unusable);
+    }
+    if all_unusable() { Err(Error::Unusable) } else { Ok(()) }
+}
+
+/// The after-fork hook in the child: marks every database a hold was live on at the fork as
+/// unusable. Call it only while the calling thread is the only one in the process.
 pub(crate) fn poison_live_holds() {
     REGISTRY.poison_live_holds();
 }
 
-/// Tests only: makes `id` unwritable, as in a child forked inside a hold on it, until the returned
-/// guard is dropped (a later test's database may reuse the inode).
+/// Tests only: makes `id` unusable, as in a child that inherited an open connection to it, until the
+/// returned guard is dropped.
 #[cfg(test)]
-pub(crate) fn poison_for_test(id: FileId) -> HoldGuard<'static> {
-    let slot = REGISTRY.poisoned.insert(id);
-    REGISTRY.any_poisoned.store(true, Ordering::Release);
+pub(crate) fn unusable_for_test(id: FileId) -> HoldGuard<'static> {
+    let slot = REGISTRY.unusable.insert(id);
+    REGISTRY.any_unusable.store(true, Ordering::Release);
     HoldGuard { slot }
 }
 
@@ -85,14 +150,26 @@ impl Drop for HoldGuard<'_> {
 #[derive(Debug)]
 pub(crate) struct Registry {
     live: IdList,
-    poisoned: IdList,
-    /// Set once `poisoned` has an entry. Only ever set, in a child before it has other threads.
-    any_poisoned: AtomicBool,
+    /// The files an open connection was inherited to, held transactions' among them.
+    unusable: IdList,
+    /// Set once `unusable` has an entry or `all_unusable` is set. Only ever set, in a child before
+    /// it has other threads.
+    any_unusable: AtomicBool,
+    /// Every file is unusable. Only ever set, like `any_unusable`, and before it.
+    all_unusable: AtomicBool,
+    /// Something was marked unusable and the hook hasn't logged it yet.
+    newly_unusable: AtomicBool,
 }
 
 impl Registry {
     pub(crate) const fn new() -> Self {
-        Self { live: IdList::new(), poisoned: IdList::new(), any_poisoned: AtomicBool::new(false) }
+        Self {
+            live: IdList::new(),
+            unusable: IdList::new(),
+            any_unusable: AtomicBool::new(false),
+            all_unusable: AtomicBool::new(false),
+            newly_unusable: AtomicBool::new(false),
+        }
     }
 
     pub(crate) fn begin_hold(&self, _gate: &SharedGuard<'_>, id: FileId) -> HoldGuard<'_> {
@@ -100,26 +177,54 @@ impl Registry {
     }
 
     #[inline]
-    pub(crate) fn check_writable(&self, id: FileId) -> Result<()> {
+    pub(crate) fn check_usable(&self, id: FileId) -> Result<()> {
         // Relaxed: the flag is only set in a child before it starts other threads, and spawning a
         // thread synchronizes with it.
-        if self.any_poisoned.load(Ordering::Relaxed) && self.poisoned.contains(id) {
-            return Err(Error::Unwritable);
+        if self.any_unusable.load(Ordering::Relaxed) {
+            return self.check_usable_cold(id);
         }
         Ok(())
     }
 
-    pub(crate) fn poison_live_holds(&self) {
-        let mut added = false;
-        self.live.for_each(|id| {
-            if !self.poisoned.contains(id) {
-                let _ = self.poisoned.insert(id);
-            }
-            added = true;
-        });
-        if added {
-            self.any_poisoned.store(true, Ordering::Release);
+    #[inline]
+    pub(crate) fn check_usable_opt(&self, id: Option<FileId>) -> Result<()> {
+        if self.any_unusable.load(Ordering::Relaxed) {
+            return match id {
+                Some(id) => self.check_usable_cold(id),
+                None if self.all_unusable.load(Ordering::Relaxed) => Err(Error::Unusable),
+                None => Ok(()),
+            };
         }
+        Ok(())
+    }
+
+    #[cold]
+    fn check_usable_cold(&self, id: FileId) -> Result<()> {
+        if self.all_unusable.load(Ordering::Relaxed) || self.unusable.contains(id) {
+            return Err(Error::Unusable);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn mark_unusable(&self, id: FileId) {
+        if !self.unusable.contains(id) {
+            let _ = self.unusable.insert(id);
+            self.newly_unusable.store(true, Ordering::Release);
+        }
+        self.any_unusable.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn mark_all_unusable(&self) {
+        if !self.all_unusable.swap(true, Ordering::AcqRel) {
+            self.newly_unusable.store(true, Ordering::Release);
+        }
+        self.any_unusable.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn poison_live_holds(&self) {
+        // A hold keeps its connection open. Marked here as well as by the pool scan, so it never
+        // depends on a mutex the child may have inherited locked.
+        self.live.for_each(|id| self.mark_unusable(id));
     }
 
     #[cfg(test)]
@@ -257,35 +362,35 @@ mod tests {
     }
 
     #[test]
-    fn check_writable_passes_until_a_fork_poisons_live_holds() {
+    fn check_usable_passes_until_a_fork_marks_live_holds() {
         let registry = Registry::new();
         let gate = G.try_enter_shared().unwrap();
         let hold = registry.begin_hold(&gate, A);
-        assert!(registry.check_writable(A).is_ok(), "the parent itself is never poisoned");
+        assert!(registry.check_usable(A).is_ok(), "the parent itself is never poisoned");
 
         // The child's after-fork hook, without forking.
         registry.poison_live_holds();
-        assert!(matches!(registry.check_writable(A), Err(Error::Unwritable)));
-        assert!(registry.check_writable(B).is_ok(), "other files stay writable");
-        assert!(registry.check_writable(C).is_ok(), "same inode, other device: another file");
+        assert!(matches!(registry.check_usable(A), Err(Error::Unusable)));
+        assert!(registry.check_usable(B).is_ok(), "other files stay usable");
+        assert!(registry.check_usable(C).is_ok(), "same inode, other device: another file");
 
-        // Ending the inherited hold in the child doesn't make the file writable again.
+        // Ending the inherited hold in the child doesn't make the file usable again.
         drop(hold);
-        assert!(matches!(registry.check_writable(A), Err(Error::Unwritable)));
+        assert!(matches!(registry.check_usable(A), Err(Error::Unusable)));
     }
 
     #[test]
-    fn a_fork_with_no_live_holds_poisons_nothing() {
+    fn a_fork_with_no_live_holds_marks_nothing() {
         let registry = Registry::new();
         let gate = G.try_enter_shared().unwrap();
         drop(registry.begin_hold(&gate, A));
         registry.poison_live_holds();
-        assert!(!registry.any_poisoned.load(Ordering::Relaxed));
-        assert!(registry.check_writable(A).is_ok());
+        assert!(!registry.any_unusable.load(Ordering::Relaxed));
+        assert!(registry.check_usable(A).is_ok());
     }
 
     #[test]
-    fn a_grandchild_inherits_the_poisoned_set_and_adds_new_holds() {
+    fn a_grandchild_inherits_the_unusable_set_and_adds_new_holds() {
         let registry = Registry::new();
         let gate = G.try_enter_shared().unwrap();
         let a = registry.begin_hold(&gate, A);
@@ -293,14 +398,43 @@ mod tests {
         drop(a);
         let b = registry.begin_hold(&gate, B);
         registry.poison_live_holds(); // grandchild, forked while the child held B
-        assert!(matches!(registry.check_writable(A), Err(Error::Unwritable)));
-        assert!(matches!(registry.check_writable(B), Err(Error::Unwritable)));
+        assert!(matches!(registry.check_usable(A), Err(Error::Unusable)));
+        assert!(matches!(registry.check_usable(B), Err(Error::Unusable)));
         // Repeated forks don't duplicate entries.
         registry.poison_live_holds();
-        let mut poisoned = Vec::new();
-        registry.poisoned.for_each(|id| poisoned.push(id));
-        poisoned.sort_unstable();
-        assert_eq!(poisoned, vec![A, B]);
+        let mut unusable = Vec::new();
+        registry.unusable.for_each(|id| unusable.push(id));
+        unusable.sort_unstable();
+        assert_eq!(unusable, vec![A, B]);
         drop(b);
+    }
+
+    #[test]
+    fn a_file_marked_unusable_fails_the_check_and_others_pass() {
+        let registry = Registry::new();
+        assert!(registry.check_usable(A).is_ok());
+        registry.mark_unusable(A);
+        assert!(matches!(registry.check_usable(A), Err(Error::Unusable)));
+        assert!(registry.check_usable(B).is_ok());
+        assert!(registry.check_usable(C).is_ok(), "same inode, other device: another file");
+        assert!(registry.newly_unusable.swap(false, Ordering::AcqRel), "flagged once for the log line");
+        registry.mark_unusable(A);
+        assert!(!registry.newly_unusable.load(Ordering::Acquire), "marking it again is not news");
+    }
+
+    #[test]
+    fn all_unusable_fails_every_file() {
+        let registry = Registry::new();
+        registry.mark_unusable(A);
+        assert!(registry.check_usable_opt(None).is_ok(), "a nonexistent file is still allowed for per-file poisoning");
+        registry.mark_all_unusable();
+        for id in [A, B, C] {
+            assert!(matches!(registry.check_usable(id), Err(Error::Unusable)));
+            assert!(matches!(registry.check_usable_opt(Some(id)), Err(Error::Unusable)));
+        }
+        assert!(
+            matches!(registry.check_usable_opt(None), Err(Error::Unusable)),
+            "when all databases are unusable, even a nonexistent path must be refused"
+        );
     }
 }

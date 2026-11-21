@@ -132,7 +132,7 @@ pub fn encode<W: Write>(o: &Bound<'_, PyAny>, cx: &EncodeCtx<'_>, depth: u32, ou
         common::TAG_FROZENSET
     } else {
         // After every exact check, before pickle: a registered type (by exact type, no MRO walk).
-        return match cx.reg.by_type(&ty) {
+        return match cx.reg.by_type(&ty)? {
             Some(entry) => encode_registered(o, entry, cx, depth, out),
             None => Err(common::unsupported(o)),
         };

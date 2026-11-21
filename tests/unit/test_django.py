@@ -66,6 +66,50 @@ def run_python(code: str) -> str:
     return result.stdout
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='os.fork')
+@pytest.mark.parametrize('durable', [False, True], ids=['plain', 'durable'])
+def test_a_child_forked_inside_a_transaction_gets_the_error_not_a_null_cache(tmp_path: Path, durable: bool) -> None:
+    # D-020, plan 32: that child can never use the cache, so even a durable alias's first open there
+    # raises, where any other failed open serves a NullCache and retries.
+    out = run_python(f"""
+        import os, time, warnings
+        from django.conf import settings
+        settings.configure()
+        from diskcache_oxide import Cache, ForkedInsideTransactionError, NullCache, djangocache
+        from diskcache_oxide.djangocache import DjangoCache
+
+        cache = Cache({str(tmp_path)!r})
+        # A failed open in the parent, its retry window still running at the fork: a durable alias
+        # in the child must not be served that NullCache (Gemini's review of plan 32, M2).
+        djangocache.unavailable[{str(tmp_path)!r}] = (time.monotonic() + 600, NullCache())
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            with cache.transact():
+                cache.set('held', 1)
+                pid = os.fork()
+                if pid == 0:
+                    code = 1
+                    try:
+                        child = DjangoCache({str(tmp_path)!r}, {{'OPTIONS': {{'durable': {durable}}}}})
+                        for call in (lambda: child.get('held'), lambda: child.set('k', 1), lambda: child.get('held')):
+                            try:
+                                got = call()
+                            except ForkedInsideTransactionError:
+                                continue
+                            raise AssertionError(f'answered {{got!r}}')
+                        code = 0
+                    finally:
+                        os._exit(code)
+                _, status = os.waitpid(pid, 0)
+        assert os.waitstatus_to_exitcode(status) == 0, status
+        djangocache.unavailable.clear()
+        backend = DjangoCache({str(tmp_path)!r}, {{'OPTIONS': {{'durable': {durable}}}}})
+        assert backend.set('parent', 1) is None and backend.get('parent') == 1
+        print('ok')
+    """)
+    assert out.strip() == 'ok'
+
+
 # The lazy name.
 
 

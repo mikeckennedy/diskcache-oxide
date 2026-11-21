@@ -27,10 +27,10 @@ Atomic across threads and processes, so concurrent increments are never lost. Th
 The key.
 
 `delta: float = …`  
-The amount to add (default 1).
+The amount to add (default 1). An int or a finite float.
 
 `default: Optional[float] = …`  
-The starting value for a missing or expired key (default 0). Pass None to raise `KeyError` instead.
+The starting value for a missing or expired key (default 0), an int or a finite float. Pass None to raise `KeyError` instead.
 
 `retry: bool = ``False`  
 On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call gets through, each round with the whole [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), a `durable=True` handle included. Only [Timeout](Timeout.md#diskcache_oxide.Timeout) is retried.
@@ -55,6 +55,9 @@ The key is missing and `default` is None, or with `durable=True`, the call faile
 
 `TypeError`  
 The stored value isn't a number.
+
+`ValueError`  
+`delta` or `default` is an infinity or a NaN. Nothing is read or written.
 
 `Timeout`  
 Another process held the write lock for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
