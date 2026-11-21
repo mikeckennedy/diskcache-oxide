@@ -4,6 +4,8 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-11-21
+
 No format change: caches made by 0.3.5 and later open as they are. One behavior change, for a child process forked at the wrong moment, and fixes from the same review as 0.4.7 that touch the engine's core.
 
 ### Changed
@@ -164,7 +166,8 @@ The first release: diskcache's `Cache` API on a Rust engine and SQLite storage, 
 
 Development before this release, including the `0.1.0.dev` builds (`0.1.0.dev1` was yanked from PyPI), is in the git history. A `0.1.0` and a `0.1.1` were built and verified but never published: new tests found two bugs just before the first upload and a third (a size-limited cache evicting entries it had room for) just before the second, each fixed first, so `0.1.2` is the first release on PyPI. `0.1.1` ran in production at Talk Python in the meantime. The `0.0.1` on PyPI is a name placeholder with no code.
 
-[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.4.7...HEAD
+[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.5.8...HEAD
+[0.5.8]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.4.7...v0.5.8
 [0.4.7]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.3.5...v0.4.6
 [0.3.5]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.2.3...v0.3.5
