@@ -159,6 +159,7 @@ reference:
         - ForeignValueError
         - FormatMismatchError
         - LayoutMismatchError
+        - ForkedInsideTransactionError
         - TransactionAborted
         - CorruptKeyError
         - UnknownFileWarning

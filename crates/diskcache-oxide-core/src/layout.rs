@@ -280,6 +280,9 @@ pub fn read_format(directory: &Path, timeout: Duration, deadline: Instant) -> Re
     let left = deadline.saturating_duration_since(Instant::now());
     crate::lockwait::retry(left, |attempt_deadline| {
         let gate = GATE.enter_shared_until(attempt_deadline).ok_or(Error::Timeout { seconds: 0.0 })?;
+        // Under the level, so a child's after-fork scan has run: never a connection on a file this
+        // process inherited one to (plan 32).
+        crate::store::check_usable_at(&db)?;
         // Never creating the file: it may have been removed since the look above (review, M2).
         let version = match open::connect_existing(directory, timeout)? {
             Some(conn) => Some(

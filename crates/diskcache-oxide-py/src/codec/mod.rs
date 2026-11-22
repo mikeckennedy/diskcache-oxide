@@ -326,6 +326,7 @@ pub(super) fn passes_through(py: Python<'_>, e: &PyErr) -> bool {
         || e.is_instance_of::<PyRecursionError>(py)
         || e.is_instance_of::<PyOSError>(py)
         || e.is_instance_of::<UnsafeValueError>(py)
+        || e.is_instance_of::<crate::ForkedInsideTransactionError>(py)
         || !e.is_instance_of::<PyException>(py)
 }
 

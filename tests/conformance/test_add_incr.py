@@ -1,5 +1,6 @@
 """add, incr and decr, including the fixed-window counter pattern and its expiry edge cases."""
 
+import math
 from typing import Any
 
 import pytest
@@ -157,6 +158,50 @@ def test_incr_on_float(cache: Any) -> None:
 
 def test_incr_float_delta_on_missing_key(cache: Any) -> None:
     assert cache.incr('k', 0.5) == 0.5
+
+
+NON_FINITE = [float('inf'), float('-inf'), float('nan')]
+
+
+@pytest.mark.diverges(
+    backend='oxide',
+    ref='D-064',
+    reason='incr and decr refuse an infinity or a NaN',
+    raises=ValueError,
+)
+@pytest.mark.parametrize('bad', NON_FINITE, ids=['inf', '-inf', 'nan'])
+def test_incr_and_decr_take_an_infinity_or_a_nan(cache: Any, bad: float) -> None:
+    # diskcache adds it and stores the result; a NaN result then reads back as None (D-008).
+    cache.set('k', 1.5)
+    result = cache.incr('k', bad)
+    assert math.isnan(result) if math.isnan(bad) else result == bad
+    assert isinstance(cache.incr('fresh', 1, default=bad), float)
+    assert isinstance(cache.decr('down', bad), float)
+
+
+@pytest.mark.backend_only('oxide')
+@pytest.mark.parametrize('bad', NON_FINITE, ids=['inf', '-inf', 'nan'])
+def test_incr_and_decr_refuse_an_infinity_or_a_nan(cache: Any, bad: float) -> None:
+    cache.set('k', 1.5)
+    for call in (
+        lambda: cache.incr('k', bad),
+        lambda: cache.decr('k', bad),
+        lambda: cache.incr('k', 1, default=bad),
+        lambda: cache.decr('k', 1, default=bad),
+        lambda: cache.incr('fresh', bad),
+        lambda: cache.incr('fresh', 1, default=bad),
+        lambda: cache.incr('fresh', bad, default=None),
+    ):
+        with pytest.raises(ValueError, match='must be a finite number'):
+            call()
+    assert cache.get('k') == 1.5, 'a refused call changed the counter'
+    assert 'fresh' not in cache, 'a refused call created the key'
+    # A counter can still reach an infinity by overflow, and stays readable and usable there.
+    cache.set('big', 1.7e308)
+    assert cache.incr('big', 1.7e308) == math.inf
+    assert cache.get('big') == math.inf
+    assert cache.incr('big', -5.0) == math.inf
+    assert cache.decr('big', 1) == math.inf
 
 
 def test_incr_on_true_raises_type_error(cache: Any) -> None:

@@ -30,7 +30,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-017 | Connections and fds | One connection per thread | A bounded pool |
 | D-018 | `close()` | Closes only the calling thread's connection | Closes every connection |
 | D-019 | Opening an existing cache, and reading | Opening writes to the database | Neither writes, unless the open changes settings; background maintenance writes when it has work, and hourly (`maintenance_interval=0` for none) |
-| D-020 | Forking inside your own transaction | Child stalls for the timeout | Fails fast with `RuntimeError` |
+| D-020 | Forking inside your own transaction, or a cache call | Child stalls for the timeout | The child can't use that cache: every call raises `ForkedInsideTransactionError` (a `RuntimeError`) at once |
 | D-021 | `directory` | Optional (temp dir) | Required |
 | D-022 | `disk=`, `eviction_policy=` | Supported | No `disk=`; least-recently-stored or `'none'`, read on every write; LRU and LFU refused |
 | D-023 | SQLite memory | 32 MiB cache + 64 MiB mmap per thread | 1 MiB per pooled connection |
@@ -73,6 +73,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-060 | `len()` and iteration | Count and list expired entries until something removes them | Leave them out the moment they expire |
 | D-061 | Between calls | Nothing happens: expired rows, an over-limit cache and stray files wait for a call | Background maintenance looks after every open cache, every 5 minutes by default |
 | D-063 | An int past 4,300 digits, `pickle=True` | Pickled and stored | `ValueError` from Python's digit limit |
+| D-064 | `incr` or `decr` with an infinity or a NaN | Adds it; a NaN result reads back as `None` and breaks the counter | `ValueError` |
 
 ## Safety
 
@@ -120,7 +121,7 @@ When a process forks while another of its threads is in a write transaction, dis
 
 ### D-020: forking inside your own transaction
 
-CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide, the child's copy of the transaction is poisoned and its writes to that database raise `RuntimeError` immediately, and the parent gets a `RuntimeWarning`.
+CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide the child can't use that cache at all: every call on it raises `RuntimeError` immediately, reads included, and the parent gets a `RuntimeWarning`. The same goes for a fork from code running inside a cache call that has its connection out, such as a pickle hook reading a small value. A child like that would otherwise run without the locks SQLite thinks it holds, reading stale data and losing its writes; [Concurrency and forks](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction) has the details.
 
 ## Transactions
 
@@ -185,6 +186,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-061:** one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every `maintenance_interval` (default 5 minutes, 0 for off), with the caches and the processes taking turns. It never waits for a lock and holds the write lock only for short chunks, so a request in the same process waits at most one chunk (about 130 µs for 100 small rows); a writer in another process can wait for a few chunks, never past the turn's 50 ms. So an explicit `expire()` or `cull()` can return less than diskcache's would, `volume()` changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
 - **D-062:** the Django backend is diskcache-oxide's own, not a port of `diskcache.DjangoCache`: `'BACKEND': 'diskcache_oxide.DjangoCache'` with `OPTIONS` in `Cache`'s keyword names, a plain `Cache` unless `OPTIONS['shards']`, a 1.0 s lock wait and errors that raise unless `durable` (diskcache's is always a `FanoutCache`, 8 shards by default, and its writes retry a 10 ms wait silently, for as long as the lock is held), `close()` a no-op, `MAX_ENTRIES` refused rather than ignored, `pickle=True` by default (Django caches responses and model instances), and `incr` the engine's atomic one, so a `bool`, `Decimal`, `IntEnum` or an int past 64 bits raises `TypeError` where Django's locmem backend adds it. No `read=`, `deque()`, `index()`, `cache(name)`, `memoize` or tag-index calls. See [Django cache backend](django.qmd).
 - **D-063:** an int past Python's int-to-str digit limit (4,300 digits by default, `sys.get_int_max_str_digits()`), top-level or nested, raises `ValueError` at `set` even with `pickle=True`, where diskcache pickles it. Big ints are stored as decimal text, and only a type the format can't hold or a lone surrogate inside a value falls back to pickle. Raising the interpreter's limit lifts it.
+- **D-064:** `incr` and `decr` raise `ValueError` for a `delta` or `default` that is an infinity or a NaN. diskcache adds it, and a counter that reaches NaN that way is stored as NULL: it reads back as `None`, and the next `incr` raises `TypeError`. A counter that overflows still becomes an infinity, and stays readable.
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)

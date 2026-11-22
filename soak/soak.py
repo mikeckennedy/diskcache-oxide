@@ -92,10 +92,16 @@ AUTO_MIN_SUCCESS_RATE = 0.95
 # (721de5a) with 8 readers, 88.2% with 5 (plan 14, the htz rehearsals of 2026-11-06). Fewer CPUs leave a
 # descheduled reader holding its read mark longer. `--auto-min-success-rate` lowers the bar for such a
 # run; the summary records the bar used.
-# Fewer judged rounds than this per store fails the run, per hour once it passes an hour, since a rate
-# from a few rounds is noise. Low on purpose: a busy round costs a second of backoff, so a failing store
-# forces few rounds (76 and 93 in 4.5 minutes, at 41% and 53%). The full shape does about 6,000 an hour.
+# Fewer judged rounds than this per store fails the run, since a rate from a few rounds is noise. Low on
+# purpose: a busy round costs a second of backoff, so a failing store forces few rounds (76 and 93 in
+# 4.5 minutes, at 41% and 53%, before background maintenance).
 AUTO_MIN_ROUNDS = 50
+# Past the first hours the bar grows by this many rounds an hour. It was 50 an hour when the request path
+# did all the trimming (about 6,000 rounds an hour in the full shape). Since 0.3.5 the maintenance thread
+# trims the WAL between bursts and few rounds are forced: the 24-hour release soak of 0.5.8 (2026-11-21)
+# did 924 and 821, 38 and 34 an hour, with 18 in a store's slowest hour, at 99.89% and 99.63%, and the
+# 4-hour run of 2026-11-13 did 50 and 34 an hour. 15 an hour is under half of the slower store.
+AUTO_MIN_ROUNDS_PER_HOUR = 15
 
 
 @dataclass
@@ -1263,7 +1269,7 @@ class Soak:
             if failures and not logged[bucket]:
                 self.event('durable-not-logged', problem=True, bucket=bucket, failures=failures)
         auto = self.auto_summary()
-        need = max(AUTO_MIN_ROUNDS, AUTO_MIN_ROUNDS * self.elapsed_h())
+        need = max(AUTO_MIN_ROUNDS, AUTO_MIN_ROUNDS_PER_HOUR * self.elapsed_h())
         for store, st in auto.items():
             # Rounds that reached the WAL. One skipped for a full pool or a pending fork proves nothing.
             rounds = st['successes'] + st['busy']

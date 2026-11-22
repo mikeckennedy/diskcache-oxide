@@ -47,13 +47,13 @@ diskcache-oxide prevents it with a **fork barrier**, a crossing guard installed 
 
 1.  **Before the fork,** the barrier waits for any write transactions already running in other threads to commit, and holds off new ones. It waits with the interpreter released, so the threads it waits for can finish. Then it closes the idle pooled connections, so the child doesn't inherit SQLite's lock bookkeeping for those files.
 2.  **In the parent,** it lets the held-off writes continue.
-3.  **In the child,** it drops any connection still inherited without closing it (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.
+3.  **In the child,** it opens fresh connections on first use. If a connection was still open at the fork, it's dropped without being closed (closing a connection inherited across a fork is unsafe in SQLite), and the child can't use that cache; [the two ways that happens](#forking-from-inside-your-own-transaction) are below.
 
 The result: whatever other threads were doing at the moment of the fork, the child is born with no locks and no debts, and can read and write right away. The barrier covers every [Cache](../reference/Cache.md#diskcache_oxide.Cache) in the process, not just the one you're holding. Your own `os.register_at_fork(after_in_child=...)` hooks can use a cache too, whether they were registered before or after `diskcache_oxide` was imported.
 
 Closing the idle connections matters for more than file descriptors. SQLite keeps one lock record per database file per process, and a new connection that finds a record saying the process already holds a shared lock takes no lock of its own. A child that inherited such a record would run with no real locks, and once the parent closed its cache, another process's last close could delete the write-ahead log under the child and lose its writes. The cost is that the parent reopens connections after each fork.
 
-The only connections a child can still inherit are the ones the forking thread itself was using: a transaction it holds (see below), or an operation it forked from inside, such as from a callback. The child leaves those file descriptors open by design.
+The only connections a child can still inherit are the ones the forking thread itself was using: a transaction it holds, or an operation it forked from inside, such as from a callback. One more case: when two threads call `os.fork()` at the same moment and the second is inside its own transaction, the first fork doesn't wait for it (it would wait forever), so the first thread's child inherits the second thread's connection. The child leaves those file descriptors open by design, and treats that cache as unusable (see below). Another library's before-fork hook that reads or writes a cache is fine: the connection it used is closed when it's given back, not kept for the child to inherit.
 
 
 ## The maintenance thread
@@ -78,7 +78,23 @@ With [`durable=True`](getting-started.md#a-cache-that-cant-take-a-request-down),
 
 ## Forking from inside your own transaction
 
-CPython won't let a library refuse a fork, so the barrier can't wait for a [transaction](transactions.md) held by the very thread that is forking. The child's copy of that transaction is poisoned: anything done inside it raises `RuntimeError` and nothing commits, and the child's writes to that database raise `RuntimeError` straight away instead of stalling for a minute. A [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) in the child doesn't join the inherited transaction either: it raises `RuntimeError` too. The parent's block carries on and commits as usual, and the parent gets a `RuntimeWarning`. A clear error at the call site beats a mysterious 60-second hang in a fresh worker.
+CPython won't let a library refuse a fork, so the barrier can't wait for a [transaction](transactions.md) held by the very thread that is forking. That transaction's connection is open when the child is born, and the child can't use it: closing or committing it there would damage the parent's transaction.
+
+It can't safely open a new connection either. This is the lock record from above: SQLite's record for the file, inherited with the open connection, says the process already holds its locks, so a new connection takes none from the kernel. The child would run unlocked. Once the parent closed its cache, the child's reads would go stale and its writes would return `True` and be lost.
+
+So in that child the cache is off limits. Every call on it raises [ForkedInsideTransactionError](../reference/ForkedInsideTransactionError.md#diskcache_oxide.ForkedInsideTransactionError) (a `RuntimeError`) at once, reads included, through the inherited handle or a new one, for as long as the process lives:
+
+``` text
+diskcache_oxide.ForkedInsideTransactionError: this cache can't be used in this process: it was forked while a connection to it was open (inside a transaction, or from a hook running inside a cache call); fork outside the transaction, or start the process with spawn or forkserver
+```
+
+Leaving the inherited `with` block raises `RuntimeError` too, and nothing commits. The parent's block carries on and commits as usual, and the parent gets a `RuntimeWarning` for forking inside it. The child logs one warning on the `diskcache_oxide` logger naming the directories it can't use. [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) still works there, so cleanup code runs, and every other cache is unaffected. A `durable=True` handle raises as well: this never passes, and a worker quietly running without its cache for good is worse than an error. A clear error at the call site beats a mysterious 60-second hang in a fresh worker, and beats a write that silently vanishes.
+
+The same holds for a fork from code that runs inside a cache call: a pickle hook, or a registered type's `decode`, that calls `os.fork()` or starts a `multiprocessing` worker with the fork start method. When that call's connection is open at the fork, its child can't use that cache. That's the case for a `decode` of a value kept in the database itself, and for anything inside a transaction; a hook that runs before the call takes a connection, or after it gave it back (encoding for [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), decoding a large value stored in a file), leaves the child a working cache. Don't rely on which one you have: don't fork there.
+
+On a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) only the shard involved is refused. Keys on the other shards work in the child, and a call that covers every shard (`len`, [clear](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [check](../reference/Cache.check.md#diskcache_oxide.Cache.check), iteration) raises before it touches any.
+
+The fix is the same in every case: fork before the block or after it, never inside, or start workers with `spawn` or `forkserver`.
 
 
 # Free-threaded performance today

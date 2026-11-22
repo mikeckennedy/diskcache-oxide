@@ -376,6 +376,77 @@ fn model_writes_slots_and_a_fork_compose() {
     WAITED.assert_reached("a fork that waited for a running level");
 }
 
+/// Model 22 (plan 32, bug B): the child of a fork that landed while another thread was ending the
+/// forking thread's transaction. That thread, the ender, has the share on its stack and doesn't
+/// exist in the child, so nothing there ever drops it. Shuttle has no fork, so the ender plays every
+/// point the fork can land at by doing some of an end and then forgetting the share: before it
+/// tries to enter (asleep in the `Lent` poll, or its entry not started), after an entry that gave up
+/// behind the fork (about to park), and after one that got in, worked and left (the tail of `end`,
+/// before the share is taken). The owner's `end_child` then runs as the child, and must see only
+/// its own guard levels: a second fork, from another thread of the child, completes, and the
+/// owner's next share counts from zero.
+#[test]
+fn model_a_share_on_a_thread_the_child_doesnt_have_counts_for_nothing() {
+    static GAVE_UP: Reach = Reach::new();
+    static GOT_IN: Reach = Reach::new();
+    static FORK_WAITED: Reach = Reach::new();
+    check(|| {
+        let gate = fresh_gate();
+        let (share_tx, share_rx) = mpsc::channel::<HeldShare<'static>>();
+        let (frozen_tx, frozen_rx) = mpsc::channel::<()>();
+        let working = Arc::new(AtomicBool::new(false));
+        let owner = {
+            let working = Arc::clone(&working);
+            thread::spawn(move || {
+                share_tx.send(gate.enter_shared_blocking().into_held()).unwrap();
+                if working.load(Ordering::SeqCst) {
+                    FORK_WAITED.hit();
+                }
+                let fork = gate.begin_fork();
+                assert!(!working.load(Ordering::SeqCst), "the fork was exclusive beside the ender's level");
+                // The fork lands with the ender wherever it stopped, and this thread is the child.
+                frozen_rx.recv().unwrap();
+                fork.end_child();
+                assert_eq!((gate.holders(), gate.parked()), (0, 0), "a share nothing can drop is still counted");
+                assert_eq!(gate.own_depth(), 0, "the forking thread still counts an inherited share as its own");
+                // Its next share, on the `Owner` it had before the fork, counts from zero.
+                let fresh = gate.enter_shared_blocking().into_held();
+                assert_eq!((gate.holders(), gate.own_depth()), (1, 1));
+                drop(fresh);
+            })
+        };
+        let ender = {
+            let working = Arc::clone(&working);
+            thread::spawn(move || {
+                let share = share_rx.recv().unwrap();
+                match share.enter_until(soon(2)) {
+                    Some(guard) => {
+                        GOT_IN.hit();
+                        working.store(true, Ordering::SeqCst);
+                        thread::yield_now();
+                        working.store(false, Ordering::SeqCst);
+                        drop(guard);
+                    }
+                    None => GAVE_UP.hit(),
+                }
+                // Frozen here for good, as the child sees it: the share is never dropped. That leaks
+                // its `Arc<Owner>` once per execution, as the real child does: a few bytes each.
+                std::mem::forget(share);
+                frozen_tx.send(()).unwrap();
+            })
+        };
+        for t in [owner, ender] {
+            t.join().unwrap();
+        }
+        // In the child: a fork from another thread isn't held up.
+        thread::spawn(move || gate.begin_fork().end_parent()).join().unwrap();
+        assert_idle(gate);
+    });
+    GAVE_UP.assert_reached("an end that gave up behind its owner's fork");
+    GOT_IN.assert_reached("an end that got in before the fork");
+    FORK_WAITED.assert_reached("a fork that claimed while the ender held a level");
+}
+
 /// A deadline a few waiter polls away, on the logical clock.
 fn soon(polls: u32) -> Instant {
     now() + WAITER_POLL * polls

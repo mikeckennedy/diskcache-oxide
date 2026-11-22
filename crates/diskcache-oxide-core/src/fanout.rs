@@ -232,6 +232,8 @@ impl ShardRequest {
 /// create shards. Concurrent creators (threads or processes) agree on one manifest: the first
 /// `link` wins, and the comparison runs only after it, so a lost race is decided by the winner's.
 pub fn open_manifest(root: &Path, request: ShardRequest) -> Result<Manifest> {
+    // Before the root can be created: a child that can use no cache leaves no new root behind.
+    crate::poison::refuse_if_nothing_is_usable()?;
     ensure_directory(root)?;
     // Before the manifest can be written, and again once it is there: of a plain `Cache` and a
     // `FanoutCache` creating one root at once, at least one is refused, and nothing is deleted.
@@ -382,6 +384,18 @@ mod tests {
 
     use super::*;
     use crate::testutil::TempDir;
+
+    #[test]
+    fn a_process_that_can_use_no_cache_creates_no_root() {
+        let tmp = TempDir::new("no-root-when-unusable");
+        let root = tmp.path().join("missing").join("root");
+        crate::poison::PRETEND_NOTHING_IS_USABLE.set(true);
+        let refused = open_manifest(&root, ShardRequest::Stored);
+        crate::poison::PRETEND_NOTHING_IS_USABLE.set(false);
+        assert!(matches!(refused, Err(Error::Unusable)), "{refused:?}");
+        assert!(!tmp.path().join("missing").exists(), "the refused open created a directory");
+        assert!(open_manifest(&root, ShardRequest::Stored).is_ok());
+    }
 
     const SHARD_COUNTS: [u32; 6] = [1, 2, 7, 8, 64, 256];
 

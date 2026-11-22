@@ -271,8 +271,9 @@ def rlimit_fsize(directory: Path) -> None:
 
 
 def fork_inside_a_hold(directory: Path) -> None:
-    """A child forked inside a transaction can't write that database (D-020), and can't use the
-    transaction: both are `RuntimeError`s on a plain handle and a miss or False on a durable one."""
+    """A child forked inside a transaction can't use that database at all (D-020), and that never
+    passes, so a durable handle raises `RuntimeError` too rather than answer a miss for the life of
+    the process (plan 32, decision 4). Nothing is counted as swallowed."""
     assert sys.platform != 'win32'
     import warnings
 
@@ -290,31 +291,28 @@ def fork_inside_a_hold(directory: Path) -> None:
     if pid == 0:
         code = 1
         try:
-            # This thread's inherited transaction: every call on it is refused.
-            assert c.get('k', 'default') == 'default', 'the inherited transaction'
-            assert 'k' not in c
-            assert c.set('k', 'child') is False
-            assert c.add('new', 1) is False
-            assert c.touch('k') is False
-            assert c.delete('k') is False
-            assert c.pop('k', 'default') == 'default'
-            assert c.incr('n', 1, 5) == 6
-            try:
-                plain.set('k', 'child')
-            except RuntimeError:
-                pass
-            else:
-                raise AssertionError('the default raises')
-            try:
-                plain.get('k')
-            except RuntimeError:
-                pass
-            else:
-                raise AssertionError('the default raises')
+            calls: dict[str, Callable[[], object]] = {
+                'get': lambda: c.get('k', 'default'),
+                'in': lambda: 'k' in c,
+                'set': lambda: c.set('k', 'child'),
+                'add': lambda: c.add('new', 1),
+                'touch': lambda: c.touch('k'),
+                'delete': lambda: c.delete('k'),
+                'pop': lambda: c.pop('k', 'default'),
+                'incr': lambda: c.incr('n', 1, 5),
+                'plain set': lambda: plain.set('k', 'child'),
+                'plain get': lambda: plain.get('k'),
+            }
+            for name, call in calls.items():
+                try:
+                    got = call()
+                except RuntimeError as ex:
+                    assert "can't be used in this process" in str(ex), (name, ex)
+                else:
+                    raise AssertionError(f'{name} answered {got!r}; it must raise')
             stats_now = c._durable_stats()
-            assert stats_now['broken']['get'] == 1, stats_now
-            assert stats_now['broken']['set'] == 1, stats_now
-            assert stats_now['lost_deletes']['delete'] == 1, stats_now
+            swallowed = sum(n for bucket in stats_now.values() for n in bucket.values())
+            assert swallowed == 0, stats_now
             code = 0
         except BaseException:
             traceback.print_exc()

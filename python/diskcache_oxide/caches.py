@@ -26,7 +26,8 @@ that. A lookup is one dict read, with no lock, so it's cheap enough to do on eve
 `NullCache` instead of raising, reports the error through `on_open_error`, and tries again after
 `retry_open_after` seconds. A directory holding another on-disk format isn't a failure: the cache
 opens in its `diskcache-oxide-format-N` subdirectory with a warning, and `remove_old_formats()`
-cleans up the old one later.
+cleans up the old one later. One failure raises from the lookup instead: `ForkedInsideTransactionError`,
+in a child process forked while a connection to the cache was open, which no retry can help.
 
 **A sharded cache keeps the shard count it was created with.** If its folder already has another
 count than `register(..., shards=n)` says, the registry opens it with the count on disk, logs a
@@ -60,7 +61,13 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Optional, Self, cast, overload
 
-from diskcache_oxide._core import Cache, FanoutCache, Timeout, _open_fanout_keeping_stored
+from diskcache_oxide._core import (
+    Cache,
+    FanoutCache,
+    ForkedInsideTransactionError,
+    Timeout,
+    _open_fanout_keeping_stored,
+)
 from diskcache_oxide._types import MaintenanceStats
 from diskcache_oxide.null import NullCache
 from diskcache_oxide.protocol import CacheLike, TransactionalCacheLike
@@ -85,9 +92,11 @@ _FANOUT_SETTINGS = _public_settings(FanoutCache)
 # `Timeout` is an `OSError`. `RuntimeError` covers `FormatMismatchError` (now only where the versioned
 # subdirectory can't help, plan 26: another format opens `diskcache-oxide-format-N` instead) and its
 # subclass `LayoutMismatchError` (a directory that holds another kind of cache, a moved shard directory, or
-# settings that fit the registered shard count but not the stored one), the not-WAL error, and a
-# child forked mid-transaction that can't write the file (D-020): a NullCache is right for all. A
-# different shard count alone is not an error here: the stored count is used (plan 15).
+# settings that fit the registered shard count but not the stored one) and the not-WAL error. A
+# different shard count alone is not an error here: the stored count is used (plan 15). One
+# `RuntimeError` is not an open error: `ForkedInsideTransactionError`, a child forked while a
+# connection to the cache was open. That lasts for the life of the process, so no retry can help,
+# and it raises from the lookup as it does from a `Cache` (D-020, plan 32).
 _OPEN_ERRORS = (OSError, RuntimeError)
 
 # The shard-count mismatches this process has reported at ERROR, keyed by (real path, stored count,
@@ -207,6 +216,8 @@ class Caches[N: str = str]:
         self._fanout: set[N] = set()
         # name -> (retry after this monotonic time, the NullCache handed out until then).
         self._failed: dict[N, tuple[float, NullCache]] = {}
+        # The process `_failed` was recorded in: a forked child starts without its parent's entries.
+        self.failures_pid = os.getpid()
 
     def __repr__(self) -> str:
         """Shows the base directory and the registered names."""
@@ -373,11 +384,22 @@ class Caches[N: str = str]:
 
     def _resolve(self, name: N) -> CacheLike:
         self._spec(name)
+        pid = os.getpid()
+        if self.failures_pid != pid:
+            # A forked child: a failed open in the parent says nothing about this process, and its
+            # NullCache must not be served here for the rest of the parent's retry window. A child
+            # that can't use the cache raises instead, from its first lookup on.
+            self._failed.clear()
+            self.failures_pid = pid
         failed = self._failed.get(name)
         if failed is not None and self._monotonic() < failed[0]:
             return failed[1]
         try:
             real = self._open(name)
+        except ForkedInsideTransactionError:
+            # No retry can help this child, so nothing is recorded: it raises every time.
+            self._failed.pop(name, None)
+            raise
         except _OPEN_ERRORS as exc:
             null = NullCache()
             retry = (

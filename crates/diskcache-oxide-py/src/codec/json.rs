@@ -259,8 +259,9 @@ impl Serialize for Enc<'_, '_> {
         } else {
             // After every exact check, before pickle: a registered type (by exact type, no MRO walk).
             return match ctx.reg.by_type(&ty) {
-                Some(entry) => self.serialize_registered(s, entry),
-                None => Err(ctx.fail(common::unsupported(o))),
+                Ok(Some(entry)) => self.serialize_registered(s, entry),
+                Ok(None) => Err(ctx.fail(common::unsupported(o))),
+                Err(shadowed) => Err(ctx.fail(shadowed)),
             };
         };
         let items = common::set_items(o).map_err(|e| ctx.fail(e))?;

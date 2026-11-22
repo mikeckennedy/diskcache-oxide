@@ -341,6 +341,8 @@ class Worker:
         self.lock = threading.Lock()
         self.chaos = open_chaos(run_dir)
         self.ledger = open_ledger(run_dir)
+        # This worker's own cache for forks inside a transaction, opened at the first one.
+        self.fork_held: Optional[Cache] = None
         # Protected by self.lock.
         self.ops = 0
         self.misses = 0
@@ -688,6 +690,15 @@ class Worker:
                 code = 1
             os._exit(code)
         took = time.monotonic() - start
+        if self.reap_fork(pid, start, took, 'forked child'):
+            with self.lock:
+                self.c['pops_fork'] += 1
+            # Every eighth clean fork is followed by one inside a transaction (plan 32).
+            if self.forks_ok % 8 == 0:
+                self.fork_inside_a_transaction()
+
+    def reap_fork(self, pid: int, start: float, took: float, what: str) -> bool:
+        """Waits for a forked child, counts it, and reports one that failed or hung. True if it passed."""
         deadline = time.monotonic() + FORK_DEADLINE
         with self.lock:
             self.fork_max_s = max(self.fork_max_s, took)
@@ -699,18 +710,70 @@ class Worker:
                     self.child_max_s = max(self.child_max_s, time.monotonic() - start - took)
                     if code == 0:
                         self.forks_ok += 1
-                        self.c['pops_fork'] += 1
                     else:
                         self.forks_failed += 1
                 if code != 0:
-                    self.problem(f'forked child exited {code}')
-                return
+                    self.problem(f'{what} exited {code}')
+                return code == 0
             time.sleep(0.05)
         os.kill(pid, signal.SIGKILL)
         os.waitpid(pid, 0)
         with self.lock:
             self.forks_failed += 1
-        self.problem(f'forked child hung for {FORK_DEADLINE:.0f}s and was killed')
+        self.problem(f'{what} hung for {FORK_DEADLINE:.0f}s and was killed')
+        return False
+
+    def fork_inside_a_transaction(self) -> None:
+        """A fork inside this thread's own transaction (D-020, plan 32): the child inherits the
+        transaction's connection, so it can't use that cache, and every call on it must raise at once.
+        The shared caches must still work there, and the parent's transaction must commit. On a cache
+        of this worker's own, so the held transaction keeps nobody else waiting."""
+        if self.fork_held is None:
+            self.fork_held = Cache(self.run_dir / f'fork-held-{self.id}', timeout=5.0)
+        cache = self.fork_held
+        round_no = self.forks_ok
+        start = time.monotonic()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', RuntimeWarning)  # "os.fork() called while this thread holds ..."
+            with cache.transact():
+                cache.set('round', round_no)
+                pid = os.fork()
+                if pid == 0:
+                    code = 0
+                    signal.alarm(int(FORK_DEADLINE) * 3)
+                    try:
+                        calls = {
+                            'get': lambda: cache.get('round'),
+                            'set': lambda: cache.set('child', 1),
+                            'len': lambda: len(cache),
+                            'a fresh handle': lambda: Cache(self.run_dir / f'fork-held-{self.id}', timeout=5.0),
+                        }
+                        for name, call in calls.items():
+                            began = time.monotonic()
+                            try:
+                                got = call()
+                            except RuntimeError as ex:
+                                assert "can't be used in this process" in str(ex), f'{name}: {ex}'
+                                assert time.monotonic() - began < 1.0, f'{name} raised only after a wait'
+                            else:
+                                raise AssertionError(f'{name} answered {got!r} in a child forked inside a transaction')
+                        key = f'own:{self.id}:fork-held-child'
+                        assert self.ledger.set(key, {'key': key, 'v': 1}) is True
+                        assert self.ledger.get(key) == {'key': key, 'v': 1}
+                        self.chaos.get('c:0')
+                        cache.close()
+                    except BaseException:
+                        traceback.print_exc()
+                        code = 1
+                    os._exit(code)
+                took = time.monotonic() - start
+                cache.set('after', round_no)
+        self.reap_fork(pid, start, took, 'child forked inside a transaction')
+        seen = (cache.get('round'), cache.get('after'), cache.get('child'))
+        if seen != (round_no, round_no, None):
+            self.problem(
+                f'after a fork inside a transaction, its keys read {seen}: expected ({round_no}, {round_no}, None)'
+            )
 
     # -- reporting ----------------------------------------------------------------------------
 

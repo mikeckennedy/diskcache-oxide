@@ -18,6 +18,7 @@ If you're starting from a symptom rather than an exception (every lookup misses,
 | `CorruptKeyError` | `CorruptValueError` | iterating over a stored key that can't be read |
 | `FormatMismatchError` | `RuntimeError` | a database or manifest this version can't read, where the versioned subdirectory can't help |
 | `LayoutMismatchError` | `FormatMismatchError`, `ValueError` | opening a directory as the wrong kind of cache |
+| `ForkedInsideTransactionError` | `RuntimeError` | any call on a cache in a child process forked while a connection to it was open |
 | `TypeError`, `ValueError`, `KeyError`, `RuntimeError`, `OSError`, `OverflowError`, `AssertionError`, `MemoryError` | built-in | described below |
 | `UnknownFileWarning` | `UserWarning` | a `check()` finding, returned rather than issued (see below) |
 | `EmptyDirWarning` | `UserWarning` | never raised or issued; kept for code that imports diskcache's name |
@@ -92,13 +93,21 @@ This one comes from the block's exit, when the transaction had already ended wit
 
 Either way nothing in the block was kept. Treat it as you would the original failure: log it, and run the block again if the work is idempotent. `TransactionAborted` is a `RuntimeError`, so an `except RuntimeError` you already have still catches it; catch `TransactionAborted` to handle this case alone.
 
-## `RuntimeError` from a transaction
+## `ForkedInsideTransactionError`: a cache that can't be used after a fork {#runtimeerror-a-cache-that-cant-be-used-after-a-fork}
 
 ```text
-RuntimeError: this database can't be written in a process forked inside a transaction
+diskcache_oxide.ForkedInsideTransactionError: this cache can't be used in this process: it was forked while a connection to it was open (inside a transaction, or from a hook running inside a cache call); fork outside the transaction, or start the process with spawn or forkserver
 ```
 
-A process forked while the forking thread itself held a `transact()` block, and this is the child. The parent's transaction carries on and commits; the child's copy is poisoned, and its writes to that database raise this instead of stalling for a minute. Don't fork from inside a transaction: start worker processes before the block, or after it. See [Forking from inside your own transaction](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction).
+This process is the child of a fork that happened while the forking thread had a connection to this cache open: inside its own `transact()` block, or from code running inside a cache call while that call had its connection out, such as a pickle hook or a registered type's `decode` reading a small value. It also happens to the child of a plain `os.fork()` on one thread while another thread, inside its own transaction, was waiting to fork too. The parent is fine, and its transaction carries on and commits. In the child, every call on that cache raises this, reads included, for as long as the process lives, on a `durable=True` handle too. Other caches work, and `close()` still does. It's a `RuntimeError`, so code that caught that keeps working. A [`Caches`](caches.qmd) lookup and a `durable` Django alias raise it too when they'd have to open the cache in that child: no retry can help, so there's no `NullCache` to fall back on.
+
+It's raised because the alternative is silent: a child like that holds none of the locks SQLite thinks it holds, so its reads could go stale and its writes could vanish. Don't fork from inside a transaction or a cache call: start worker processes before the block, or after it, or use the `spawn` or `forkserver` start method. See [Forking from inside your own transaction](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction).
+
+```text
+diskcache_oxide.ForkedInsideTransactionError: this transaction was inherited across fork() and can't be used in the child
+```
+
+The same child, leaving the `with cache.transact():` block it was forked inside. Nothing in the block commits there; the parent's copy is the real one.
 
 ## `UnsafeValueError`: a pickled value, read without `pickle=True`
 
@@ -211,7 +220,7 @@ SQLite refused write-ahead logging, which diskcache-oxide requires for readers a
 
 ## `UnknownFileWarning` and `EmptyDirWarning`
 
-`check()` returns what it found as a list of `warnings.WarningMessage` and issues nothing through `warnings`, so these never show up as warnings on their own. A file in the cache directory or a value folder that no entry names, and that's over an hour old, is reported as `unknown file: ...` with the category `UnknownFileWarning`; `check(fix=True)` removes it when it's in a value folder. `EmptyDirWarning` is diskcache's warning for an empty folder. It's exported so code that imports it keeps working, but `check()` never reports one: empty value folders are normal on an open cache, and `check(fix=True)` sweeps them.
+`check()` returns what it found as a list of `warnings.WarningMessage` and issues nothing through `warnings`, so these never show up as warnings on their own. A file in the cache directory or a value folder that no entry names, and that's over an hour old, is reported as `unknown file: ...` with the category `UnknownFileWarning`; `check(fix=True)` removes it when it's in a value folder, under the write lock, so it waits for any open transaction (whose uncommitted entry may be the one that names the file) and raises `Timeout` if that transaction outlasts the timeout. An entry with a damaged column is reported as `damaged row N: its COLUMN is stored as TYPE`, and removed by `check(fix=True)`. Until then, an entry with a damaged file name, or a damaged size on a value stored in a file, reads as a miss; one with a damaged `mode`, `expire_time` or `store_seq` can raise `OSError` from calls on that key, and from `pull`, `peek` or `peekitem` when it's the entry they reach. A `store_seq` of 2^62 - 1 or more is reported as `an integer too large to be one`, and a `size` below 0 or above 2^48 as `an integer no size can be`. Damage to the cache's own bookkeeping row is reported as `damaged cache state: its COLUMN is stored as TYPE`: a stored total (`count`, `size`) of the wrong type, which `check(fix=True)` recounts, or a damaged next sequence number (`next_seq`), which makes every write raise `OSError` until `check(fix=True)` sets it past every entry's. `EmptyDirWarning` is diskcache's warning for an empty folder. It's exported so code that imports it keeps working, but `check()` never reports one: empty value folders are normal on an open cache, and `check(fix=True)` sweeps them.
 
 ## `KeyError`
 

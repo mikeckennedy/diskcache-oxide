@@ -36,6 +36,7 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     '_sqlite_mutex_status',
     'FormatMismatchError',
     'LayoutMismatchError',
+    'ForkedInsideTransactionError',
     'Cache',
     'FanoutCache',
     'Transaction',
@@ -86,6 +87,13 @@ class LayoutMismatchError(FormatMismatchError, ValueError):
     """The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or shard, a
     `FanoutCache` on a plain `Cache`'s directory, a shard opened as another index or count than it records, or a
     `shards=` that differs from the stored count. Also a `ValueError`, which is what these raised before."""
+
+class ForkedInsideTransactionError(RuntimeError):
+    """This process can't use the cache: it's the child of a fork that happened while a connection to
+    the cache was open, inside a `transact()` block or from a hook running inside a cache call. Every
+    call on that cache raises this in the child, reads included, for the life of the process, on a
+    `durable=True` handle too, and so does leaving the inherited `transact()` block. The parent is
+    unaffected. Fork outside the transaction, or start the process with spawn or forkserver (D-020)."""
 
 def sqlite_version() -> str:
     """The SQLite version reported at runtime by `sqlite3_libversion()`.
@@ -237,7 +245,8 @@ class Cache:
             give `default + delta`. It's reported on the `diskcache_oxide` logger, at most once a
             minute per kind of failure. Bugs still raise (`TypeError`, `ValueError`,
             `UnsafeValueError`), as do `MemoryError` and `KeyboardInterrupt`, a `RecursionError` from
-            encoding a value too deep for this thread's stack, the constructor, admin
+            encoding a value too deep for this thread's stack, the `RuntimeError` of a child that a fork
+            left unable to use the cache, the constructor, admin
             calls (`len`, `volume`, `clear`, `expire`, `cull`, `checkpoint`, iteration) and anything
             inside a transaction held on this cache. This isn't durability in the database sense:
             this option can drop writes, and a dropped `set`, `delete`, `pop` or `incr` means stale
@@ -586,9 +595,9 @@ class Cache:
 
         Args:
             key: The key.
-            delta: The amount to add (default 1).
-            default: The starting value for a missing or expired key (default 0). Pass None to
-                raise `KeyError` instead.
+            delta: The amount to add (default 1). An int or a finite float.
+            default: The starting value for a missing or expired key (default 0), an int or a
+                finite float. Pass None to raise `KeyError` instead.
             retry: On a `Timeout`, try again until the call gets through, each round with the
                 whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
@@ -601,6 +610,7 @@ class Cache:
             KeyError: The key is missing and `default` is None, or with `durable=True`, the call
                 failed and `default` is None.
             TypeError: The stored value isn't a number.
+            ValueError: `delta` or `default` is an infinity or a NaN. Nothing is read or written.
             Timeout: Another process held the write lock for longer than `timeout`.
 
         Examples:
@@ -615,6 +625,9 @@ class Cache:
 
         Returns:
             The new value.
+
+        Raises:
+            ValueError: `delta` or `default` is an infinity or a NaN, as for `incr()`.
         """
     def memoize(
         self,
@@ -686,22 +699,27 @@ class Cache:
         of SQLite's `integrity_check`; a spilled entry whose value file is missing or the wrong size
         (`file not found: ...`, `wrong file size: ...`); a file in a value folder, or the cache
         directory, that no entry names and that is over an hour old (`unknown file: ...`, an
-        `UnknownFileWarning`; a younger one may be a writer's in flight); and stored totals that
-        don't match the rows. Empty value folders aren't reported: they're normal on an open cache.
-        Runs in short steps, so writers and forks aren't held up, apart from `integrity_check` and
-        `VACUUM`.
+        `UnknownFileWarning`; a younger one may be a writer's in flight); an entry with a column of
+        the wrong SQLite type, as a damaged page leaves it (`damaged row N: its COLUMN is stored as
+        TYPE`); a stored total or next sequence number that is damaged the same way (`damaged cache
+        state: its COLUMN is stored as TYPE`); and stored totals that don't match the rows. Empty
+        value folders aren't reported: they're normal on an open cache. Runs in short steps, so
+        writers and forks aren't held up, apart from `integrity_check` and `VACUUM`.
 
         Args:
-            fix: Also repair: remove an entry whose file is missing or the wrong size (it reads as a
-                miss anyway), remove unknown files in value folders (never elsewhere), sweep empty
-                value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
+            fix: Also repair: remove an entry whose file is missing or the wrong size, or with a
+                damaged column (it reads as a miss, or raises), remove unknown files in value folders
+                (never elsewhere; each under the write lock, so it waits for an open transaction, whose
+                uncommitted entry may be the one naming the file), sweep empty value folders, correct
+                the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
                 whole database through the write-ahead log and needs a temporary copy of it in
                 `SQLITE_TMPDIR`, `TMPDIR` or `/tmp`; forks and writers wait for it.
             retry: On a `Timeout`, start again until it gets through.
 
         Raises:
             RuntimeError: Inside this thread's own `transact()` block.
-            Timeout: A step waited longer than `timeout` (and `retry` is False).
+            Timeout: A step waited longer than `timeout` (and `retry` is False): with `fix`, that
+                includes a transaction held open elsewhere for the whole of it.
         """
     def maintenance_stats(self) -> MaintenanceStats:
         """How background maintenance has gone on this cache in this process (see
@@ -721,6 +739,10 @@ class Cache:
         when the process (or a forked child) starts, and every handle on one directory in a process
         shares them. `in`, `pop` and iteration don't count; a durable outage answered as a miss
         counts as nothing. A `FanoutCache` sums its shards.
+
+        Raises:
+            ForkedInsideTransactionError: This process is a child that a fork left unable to use this
+                cache (D-020).
         """
     @property
     def durable(self) -> bool:
@@ -1536,22 +1558,27 @@ class FanoutCache:
         of SQLite's `integrity_check`; a spilled entry whose value file is missing or the wrong size
         (`file not found: ...`, `wrong file size: ...`); a file in a value folder, or the cache
         directory, that no entry names and that is over an hour old (`unknown file: ...`, an
-        `UnknownFileWarning`; a younger one may be a writer's in flight); and stored totals that
-        don't match the rows. Empty value folders aren't reported: they're normal on an open cache.
-        Runs in short steps, so writers and forks aren't held up, apart from `integrity_check` and
-        `VACUUM`.
+        `UnknownFileWarning`; a younger one may be a writer's in flight); an entry with a column of
+        the wrong SQLite type, as a damaged page leaves it (`damaged row N: its COLUMN is stored as
+        TYPE`); a stored total or next sequence number that is damaged the same way (`damaged cache
+        state: its COLUMN is stored as TYPE`); and stored totals that don't match the rows. Empty
+        value folders aren't reported: they're normal on an open cache. Runs in short steps, so
+        writers and forks aren't held up, apart from `integrity_check` and `VACUUM`.
 
         Args:
-            fix: Also repair: remove an entry whose file is missing or the wrong size (it reads as a
-                miss anyway), remove unknown files in value folders (never elsewhere), sweep empty
-                value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
+            fix: Also repair: remove an entry whose file is missing or the wrong size, or with a
+                damaged column (it reads as a miss, or raises), remove unknown files in value folders
+                (never elsewhere; each under the write lock, so it waits for an open transaction, whose
+                uncommitted entry may be the one naming the file), sweep empty value folders, correct
+                the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
                 whole database through the write-ahead log and needs a temporary copy of it in
                 `SQLITE_TMPDIR`, `TMPDIR` or `/tmp`; forks and writers wait for it.
             retry: On a `Timeout`, start again until it gets through.
 
         Raises:
             RuntimeError: Inside this thread's own `transact()` block.
-            Timeout: A step waited longer than `timeout` (and `retry` is False).
+            Timeout: A step waited longer than `timeout` (and `retry` is False): with `fix`, that
+                includes a transaction held open elsewhere for the whole of it.
         """
     def maintenance_stats(self) -> MaintenanceStats:
         """How background maintenance has gone on this cache in this process (see
@@ -1571,6 +1598,10 @@ class FanoutCache:
         when the process (or a forked child) starts, and every handle on one directory in a process
         shares them. `in`, `pop` and iteration don't count; a durable outage answered as a miss
         counts as nothing. A `FanoutCache` sums its shards.
+
+        Raises:
+            ForkedInsideTransactionError: This process is a child that a fork left unable to use this
+                cache (D-020).
         """
     @property
     def durable(self) -> bool:
@@ -1700,7 +1731,8 @@ class Transaction[C]:
             TransactionBusy: This thread holds another cache's transaction, and another thread holds
                 this one's write lock.
             RuntimeError: It was already entered, or is being entered on another thread, or this
-                process is a child forked inside a transaction on this directory.
+                process is a child that can't use this cache: it was forked inside a transaction on
+                it, or from code running inside a call on it.
             ValueError: A FanoutCache's transaction, and this thread holds one on another of the
                 root's shards.
         """
@@ -1721,6 +1753,8 @@ class Transaction[C]:
             TransactionAborted: With no exception, the transaction didn't commit: another thread
                 or an earlier exit ended it, or it was rolled back after an error inside it.
             RuntimeError: It was never entered, or is still being entered on another thread.
+            ForkedInsideTransactionError: This process is a child forked while the transaction was
+                open: it was inherited across `fork()`, and nothing commits here.
             Timeout: The commit couldn't run within `timeout`; it rolled back. Or another thread's
                 end was still running after `timeout`, and whether it committed is unknown.
         """

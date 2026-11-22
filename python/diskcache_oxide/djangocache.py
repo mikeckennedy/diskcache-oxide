@@ -69,7 +69,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.signals import setting_changed
 from django.utils.module_loading import import_string
 
-from diskcache_oxide._core import Cache, FanoutCache, Timeout
+from diskcache_oxide._core import Cache, FanoutCache, ForkedInsideTransactionError, Timeout
 from diskcache_oxide._types import Key, MaintenanceStats
 from diskcache_oxide.null import NullCache
 
@@ -123,8 +123,27 @@ configured: dict[str, dict[str, Any]] = {}
 
 # A durable alias whose directory couldn't be opened: when to try again, and the NullCache served
 # until then. `Timeout` is an `OSError`; `RuntimeError` covers a directory holding the other kind of
-# cache (`LayoutMismatchError`) and a child forked mid-transaction. Bad settings still raise.
+# cache (`LayoutMismatchError`). Bad settings still raise, and so does a child a fork left unable to
+# use the cache (`ForkedInsideTransactionError`, D-020): no retry can help it.
 unavailable: dict[str, tuple[float, NullCache]] = {}
+# The process `unavailable` was recorded in: a forked child starts without its parent's entries.
+unavailable_pid = os.getpid()
+
+
+def forget_the_parents_failures() -> None:
+    """Empty `unavailable` in a forked child, once. Used by `open_handle`; not called directly.
+
+    A failed open in the parent says nothing about this process, and its NullCache must not be
+    served here for the rest of the parent's retry window: a child that can't use the cache
+    (forked inside a transaction) raises instead, from its first call on.
+    """
+    global unavailable_pid
+    pid = os.getpid()
+    if unavailable_pid != pid:
+        unavailable.clear()
+        unavailable_pid = pid
+
+
 RETRY_OPEN_AFTER = 10.0
 RETRY_AFTER_BUSY = 1.0  # a Timeout at open means busy (a fork, a peer holding the lock), not broken
 OPEN_ERRORS = (OSError, RuntimeError)
@@ -557,6 +576,7 @@ class DjangoCache(BaseCache):
         if configured.setdefault(self.directory, self.options) != self.options:
             raise options_mismatch(self.directory)
         durable = self.options['durable']
+        forget_the_parents_failures()
         down = unavailable.get(self.directory) if durable else None
         if down is not None:
             now = time.monotonic()
@@ -567,6 +587,11 @@ class DjangoCache(BaseCache):
             unavailable[self.directory] = (now + RETRY_AFTER_BUSY, down[1])
         try:
             new = (FanoutCache if self.sharded else Cache)(self.directory, **self.options)
+        except ForkedInsideTransactionError:
+            # No retry can help this child, so nothing stays recorded, the retry window this call
+            # may have just set included: it raises every time.
+            unavailable.pop(self.directory, None)
+            raise
         except OPEN_ERRORS as error:
             if not durable:
                 raise

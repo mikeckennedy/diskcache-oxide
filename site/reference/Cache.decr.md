@@ -22,3 +22,10 @@ Cache.decr(
 
 `int | float`  
 The new value.
+
+
+## Raises
+
+
+`ValueError`  
+`delta` or `default` is an infinity or a NaN, as for [incr()](Cache.incr.md#diskcache_oxide.Cache.incr).
