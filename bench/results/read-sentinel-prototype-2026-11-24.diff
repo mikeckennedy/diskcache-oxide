@@ -1,0 +1,328 @@
+diff --git a/crates/diskcache-oxide-core/src/lib.rs b/crates/diskcache-oxide-core/src/lib.rs
+index d6d87de2..811eac51 100644
+--- a/crates/diskcache-oxide-core/src/lib.rs
++++ b/crates/diskcache-oxide-core/src/lib.rs
+@@ -25,6 +25,7 @@ pub mod pool;
+ pub mod queue;
+ pub mod rows;
+ pub mod schema;
++pub mod sentinel;
+ pub mod spill;
+ pub mod sqlite;
+ pub mod sqlite_mutex;
+diff --git a/crates/diskcache-oxide-core/src/pool.rs b/crates/diskcache-oxide-core/src/pool.rs
+index 60dca755..e3ada0f8 100644
+--- a/crates/diskcache-oxide-core/src/pool.rs
++++ b/crates/diskcache-oxide-core/src/pool.rs
+@@ -44,6 +44,8 @@ pub struct PooledConn {
+     generation: u64,
+     /// The store settings last applied to it; zeros until the store applies them.
+     applied: Applied,
++    /// PROTOTYPE (plan 33): the data version last seen on this connection.
++    pub seen_version: u32,
+ }
+ 
+ /// Per-connection settings a store applies at lease time (all connection settings; none writes).
+@@ -248,7 +250,7 @@ impl Pool {
+             return Ok(pooled);
+         }
+         match connect() {
+-            Ok(conn) => Ok(PooledConn { conn, generation: current, applied: Applied::default() }),
++            Ok(conn) => Ok(PooledConn { conn, generation: current, applied: Applied::default(), seen_version: 0 }),
+             Err(error) => {
+                 let mut state = self.shared.lock();
+                 if state.generation == current {
+@@ -296,7 +298,7 @@ impl Pool {
+         let current = gate::generation();
+         debug_assert_eq!(generation, current, "a connection adopted across a fork");
+         let forking = gate::forking_in_parent(gate);
+-        let pooled = PooledConn { conn, generation, applied: Applied::default() };
++        let pooled = PooledConn { conn, generation, applied: Applied::default(), seen_version: 0 };
+         let surplus = {
+             let mut state = self.shared.lock();
+             reset_if_stale(&mut state, current);
+@@ -444,7 +446,7 @@ mod tests {
+         let stale = PooledConn {
+             conn: pooled.conn,
+             generation: gate::generation().wrapping_add(1),
+-            applied: Applied::default(),
++            applied: Applied::default(), seen_version: 0,
+         };
+         assert!(stale.is_stale());
+         pool.checkin(&gate, stale);
+@@ -455,7 +457,7 @@ mod tests {
+     fn a_stale_pool_forgets_its_idle_connections_and_count() {
+         let conn = crate::sqlite::open_in_memory().unwrap();
+         let mut state = PoolState {
+-            idle: vec![PooledConn { conn, generation: 7, applied: Applied::default() }],
++            idle: vec![PooledConn { conn, generation: 7, applied: Applied::default(), seen_version: 0 }],
+             generation: 7,
+             checked_out: 3,
+         };
+diff --git a/crates/diskcache-oxide-core/src/sentinel.rs b/crates/diskcache-oxide-core/src/sentinel.rs
+new file mode 100644
+index 00000000..75aeaee0
+--- /dev/null
++++ b/crates/diskcache-oxide-core/src/sentinel.rs
+@@ -0,0 +1,170 @@
++//! PROTOTYPE, plan 33 candidate S. Never merged: no fork handling, and it reads environment variables.
++//!
++//! One extra connection per store sits inside a read transaction. SQLite's unix VFS counts shared
++//! `-shm` locks per process and calls `fcntl` only when a count leaves or returns to zero, so while
++//! the sentinel holds the current read mark, every other connection's read in this process starts and
++//! ends with no lock system call (and, with frames in the WAL, no `fstat` either).
++//!
++//! A held mark must not go stale, or it pins the WAL and the readers move to another mark and pay the
++//! system calls again. So the sentinel is dropped to be taken again ("disarmed") when a connection sees
++//! that the database changed (`SQLITE_FCNTL_DATA_VERSION`, read after each operation: no lock, no
++//! system call), every `DCO_PROTO_SENTINEL_MS` milliseconds (default 50; a checkpoint in another
++//! process changes no data), and around this process's own checkpoints.
++#![allow(unsafe_code)]
++
++use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
++use std::sync::{Mutex, OnceLock, PoisonError};
++use std::time::Instant;
++
++use rusqlite::Connection;
++
++fn setting(name: &str, default: u64) -> u64 {
++    std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
++}
++
++/// `DCO_PROTO_SENTINEL=1` turns the prototype on.
++pub fn enabled() -> bool {
++    static ON: OnceLock<bool> = OnceLock::new();
++    *ON.get_or_init(|| setting("DCO_PROTO_SENTINEL", 0) == 1)
++}
++
++fn refresh_ms() -> u64 {
++    static MS: OnceLock<u64> = OnceLock::new();
++    *MS.get_or_init(|| setting("DCO_PROTO_SENTINEL_MS", 50))
++}
++
++/// `DCO_PROTO_SENTINEL_QUIET`: operations in a row that must see no change before the sentinel is taken.
++fn quiet_needed() -> u64 {
++    static N: OnceLock<u64> = OnceLock::new();
++    *N.get_or_init(|| setting("DCO_PROTO_SENTINEL_QUIET", 0))
++}
++
++fn now_ms() -> u64 {
++    static START: OnceLock<Instant> = OnceLock::new();
++    u64::try_from(START.get_or_init(Instant::now).elapsed().as_millis()).unwrap_or(u64::MAX)
++}
++
++/// The connection's data version: changes whenever the database content this connection sees has
++/// changed, by any connection in any process. Reads a field of the pager; takes no file lock.
++pub fn data_version(conn: &Connection) -> u32 {
++    let mut version: u32 = 0;
++    // SAFETY: the handle is a live connection for the length of the call, "main" always exists, and
++    // SQLITE_FCNTL_DATA_VERSION writes one unsigned int through the pointer.
++    unsafe {
++        rusqlite::ffi::sqlite3_file_control(
++            conn.handle(),
++            c"main".as_ptr(),
++            rusqlite::ffi::SQLITE_FCNTL_DATA_VERSION,
++            std::ptr::from_mut(&mut version).cast(),
++        );
++    }
++    version
++}
++
++/// `BEGIN` and one read of the schema table, which is what takes the read mark. Cached statements:
++/// this runs after every commit the process sees.
++fn begin_read(conn: &Connection) -> rusqlite::Result<()> {
++    conn.prepare_cached("BEGIN")?.raw_execute()?;
++    conn.prepare_cached("SELECT 1 FROM sqlite_schema LIMIT 1")?.exists([])?;
++    Ok(())
++}
++
++#[derive(Debug, Default)]
++pub struct Sentinel {
++    conn: Mutex<Option<Connection>>,
++    armed: AtomicBool,
++    armed_at_ms: AtomicU64,
++    /// Checkpoints of this process in progress: the sentinel stays down while one runs.
++    paused: AtomicUsize,
++    closed: AtomicBool,
++    /// Operations in a row that saw no change.
++    quiet: AtomicU64,
++    pub arms: AtomicU64,
++}
++
++impl Sentinel {
++    /// Makes sure the sentinel holds a read transaction. The fast path is one load and one clock read.
++    pub fn ensure(&self, connect: impl FnOnce() -> crate::Result<Connection>) {
++        if self.armed.load(Ordering::Relaxed) {
++            let every = refresh_ms();
++            if every == 0 || now_ms().saturating_sub(self.armed_at_ms.load(Ordering::Relaxed)) < every {
++                return;
++            }
++            self.disarm();
++        }
++        if self.paused.load(Ordering::Acquire) > 0
++            || self.closed.load(Ordering::Acquire)
++            || self.quiet.load(Ordering::Relaxed) < quiet_needed()
++        {
++            return;
++        }
++        let mut slot = self.conn.lock().unwrap_or_else(PoisonError::into_inner);
++        if self.armed.load(Ordering::Acquire) || self.closed.load(Ordering::Acquire) {
++            return;
++        }
++        if slot.is_none() {
++            let Ok(conn) = connect() else { return };
++            *slot = Some(conn);
++        }
++        if let Some(conn) = slot.as_ref()
++            && begin_read(conn).is_ok()
++        {
++            self.armed_at_ms.store(now_ms(), Ordering::Relaxed);
++            self.arms.fetch_add(1, Ordering::Relaxed);
++            self.armed.store(true, Ordering::Release);
++        }
++    }
++
++    /// Ends the sentinel's read transaction; the next `ensure` starts a new one on the current state.
++    pub fn disarm(&self) {
++        if !self.armed.load(Ordering::Acquire) {
++            return;
++        }
++        let slot = self.conn.lock().unwrap_or_else(PoisonError::into_inner);
++        if self.armed.swap(false, Ordering::AcqRel)
++            && let Some(conn) = slot.as_ref()
++        {
++            let _ = conn.prepare_cached("ROLLBACK").and_then(|mut end| end.raw_execute());
++        }
++    }
++
++    /// An operation ended and its connection saw the same database as before.
++    pub fn quiet(&self) {
++        if !self.armed.load(Ordering::Relaxed) {
++            self.quiet.fetch_add(1, Ordering::Relaxed);
++        }
++    }
++
++    /// An operation ended and its connection saw a changed database.
++    pub fn changed(&self) {
++        self.quiet.store(0, Ordering::Relaxed);
++        self.disarm();
++    }
++
++    /// Keeps the sentinel down until the guard drops (around a checkpoint by this process).
++    pub fn pause(&self) -> Pause<'_> {
++        self.paused.fetch_add(1, Ordering::AcqRel);
++        self.disarm();
++        Pause(self)
++    }
++
++    pub fn close(&self) {
++        self.closed.store(true, Ordering::Release);
++        let mut slot = self.conn.lock().unwrap_or_else(PoisonError::into_inner);
++        self.armed.store(false, Ordering::Release);
++        *slot = None;
++    }
++
++    pub fn reopen(&self) {
++        self.closed.store(false, Ordering::Release);
++    }
++}
++
++#[derive(Debug)]
++pub struct Pause<'s>(&'s Sentinel);
++
++impl Drop for Pause<'_> {
++    fn drop(&mut self) {
++        self.0.paused.fetch_sub(1, Ordering::AcqRel);
++    }
++}
+diff --git a/crates/diskcache-oxide-core/src/store.rs b/crates/diskcache-oxide-core/src/store.rs
+index 091f5b7f..95851b5e 100644
+--- a/crates/diskcache-oxide-core/src/store.rs
++++ b/crates/diskcache-oxide-core/src/store.rs
+@@ -173,6 +173,8 @@ pub struct Store {
+     pin: Mutex<Option<FilePin>>,
+     retired: AtomicBool,
+     pool: Pool,
++    /// PROTOTYPE (plan 33, candidate S).
++    pub sentinel: crate::sentinel::Sentinel,
+     write_lock: WriteLock,
+     slots: Slots,
+     /// The largest `max_connections` any handle on this store asked for.
+@@ -714,6 +716,7 @@ impl Store {
+             pin: Mutex::new(Some(pin)),
+             retired: AtomicBool::new(false),
+             pool: Pool::new(&gate, usize::try_from(options.max_connections).unwrap_or(usize::MAX), file_id),
++            sentinel: crate::sentinel::Sentinel::default(),
+             write_lock: WriteLock::new(),
+             slots: Slots::new(),
+             max_connections: AtomicU64::new(options.max_connections),
+@@ -888,6 +891,7 @@ impl Store {
+         };
+         *slot = Some(pin);
+         self.retired.store(false, Ordering::Release);
++        self.sentinel.reopen();
+         drop(slot);
+         if let Some(asked) = asked {
+             self.ask_maintenance(stores, asked, true);
+@@ -1129,6 +1133,7 @@ impl Store {
+         drop(stores);
+         drop(unpinned);
+         if retired {
++            self.sentinel.close();
+             self.pool.clear(gate);
+         }
+         Retirement(retired.then_some(self))
+@@ -1520,6 +1525,9 @@ impl Store {
+         let result = lockwait::retry(deadline.saturating_duration_since(Instant::now()), |attempt_deadline| {
+             let _permit = self.reserve_slot(attempt_deadline)?;
+             let gate = enter_until(attempt_deadline)?;
++            // PROTOTYPE: the sentinel is down for the whole write, so the checkpoint SQLite runs at
++            // the commit isn't capped at the sentinel's mark.
++            let _sentinel_down = self.sentinel.pause();
+             let lease = self.lease(&gate, timeout)?;
+             let tx = WriteTx::begin(lease.conn(), timeout)?;
+             let value = write(&RowWriter::new(lease.conn(), timeout), lease.conn())?;
+@@ -1700,6 +1708,7 @@ impl Store {
+     /// one doesn't. `maintenance_stats()` reports the background's work.
+     pub(crate) fn background_checkpoint(&self, turn: &BackgroundTurn<'_>) -> Option<crate::wal::Outcome> {
+         use crate::wal::Outcome;
++        let _sentinel_down = self.sentinel.pause();
+         if self.is_retired() || self.wal.in_backoff() || crate::poison::check_usable(self.file_id).is_err() {
+             return None;
+         }
+@@ -1786,6 +1795,7 @@ impl Store {
+     /// for the try under way, and one that arrives sooner for the rest of PASSIVE and the first try.
+     fn checkpoint_once(&self, deadline: Instant) -> crate::wal::Outcome {
+         use crate::wal::Outcome;
++        let _sentinel_down = self.sentinel.pause();
+         let classify = |error: Error| match error {
+             Error::Timeout { .. } => Outcome::Busy,
+             other => Outcome::Failed(other),
+@@ -2107,6 +2117,9 @@ impl Store {
+         // the after-fork scan has run: never a connection on a file this process inherited one to
+         // (plan 32). The checks a write makes before it waits for a lock only fail sooner.
+         crate::poison::check_usable(self.file_id)?;
++        if crate::sentinel::enabled() && !self.is_retired() {
++            self.sentinel.ensure(|| open::connect(&self.directory, timeout));
++        }
+         let mut pooled = self.pool.checkout(gate, || open::connect(&self.directory, timeout))?;
+         // New connections, and older ones after a handle asked for more, get the store's settings.
+         // All three are connection settings that write nothing (D-019). `format!` is safe here:
+@@ -2246,7 +2259,16 @@ impl Lease<'_, '_> {
+ 
+ impl Drop for Lease<'_, '_> {
+     fn drop(&mut self) {
+-        if let Some(pooled) = self.pooled.take() {
++        if let Some(mut pooled) = self.pooled.take() {
++            if crate::sentinel::enabled() {
++                let version = crate::sentinel::data_version(pooled.conn());
++                if version == pooled.seen_version {
++                    self.store.sentinel.quiet();
++                } else {
++                    pooled.seen_version = version;
++                    self.store.sentinel.changed();
++                }
++            }
+             self.store.give_back(self.gate, pooled);
+         }
+     }

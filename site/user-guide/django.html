@@ -511,7 +511,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="20" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="23" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -940,7 +940,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </tbody>
 </table>
 </div>
-<p>A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> stops climbing past two processes and then falls, and the writes aren’t the cause: at 1,000 reads to 1 write it falls the same way (295k at 8 processes), and so it does with no writes at all. The likely cause is the lock every read takes in SQLite’s shared-memory file, which processes reading one database contend for (not yet profiled across processes); it’s the top item for the <a href="../user-guide/performance.html#next-free-threaded-scaling">free-threaded phase</a>. Shards spread the reads over 8 files, which is what <code>OPTIONS = {'shards': 8}</code> is for: with 8 worker processes it’s 5.3x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. The free-threaded build’s process numbers are the same or up to 13% lower.</p>
+<p>A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> stops climbing past two processes and then falls, and the writes aren’t the cause: at 1,000 reads to 1 write it falls the same way (295k at 8 processes), and so it does with no writes at all. The cause is the lock every read takes in SQLite’s shared-memory file: the operating system serializes it when several processes take it on one file, so Python’s own <code>sqlite3</code> module falls the same way (severely on macOS; on an x86-64 Linux host a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> keeps climbing and bends only past 4 processes, <code>bench/results/read-sentinel-2026-11-24.md</code>). Shards spread the reads over 8 files, which is what <code>OPTIONS = {'shards': 8}</code> is for: with 8 worker processes it’s 5.3x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. The free-threaded build’s process numbers are the same or up to 13% lower.</p>
 <p><strong>Four worker processes, the options side by side.</strong> A typical small deployment, gunicorn with <code>workers = 4</code>, measured on its own: each backend at 4 processes, median of 3 rounds of 3 seconds, on Python 3.14 (<code>bench/django_procs.py</code>; <code>bench/results/django-4procs-macbook-m5-pro.md</code>):</p>
 <div class="dco-chart" data-type="hbars" data-y="operations per second, all 4 workers together" data-title="Four Django workers: shards=8 is the fastest shared cache" data-note="bench/django_procs.py: 4 worker processes, one thread each, through django.core.cache, 1 KB str values, Django 6.1.3, Python 3.14, MacBook Pro (M5 Pro). Higher is better. LocMemCache is left out: each worker has its own, so nothing is shared. Hover for the numbers.">
 <table class="caption-top table">

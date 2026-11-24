@@ -476,7 +476,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="20" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="23" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -790,7 +790,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li>a per-process lock-caching layer under SQLite, or longer-lived read snapshots;</li>
 <li>thread-affine connections;</li>
 <li>cheaper reference counting on shared <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> objects in free-threaded builds;</li>
-<li>making threads that share one handle scale. <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> is built: it removes the multi-process ceiling (a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> falls past two processes even when they only read, which points at this same lock; not yet profiled across processes) and lifts this read ceiling part of the way (1.7x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 8 threads on 3.14t with hot keys, about 10% on GIL builds), and the shared per-handle path is still being worked on.</li>
+<li>making threads that share one handle scale. <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> is built: it removes the multi-process ceiling (a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> falls past two processes even when they only read: the operating system serializes this same lock when several processes take it on one file, measured in <code>bench/results/read-sentinel-2026-11-24.md</code>) and lifts this read ceiling part of the way (1.7x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 8 threads on 3.14t with hot keys, about 10% on GIL builds), and the shared per-handle path is still being worked on.</li>
 </ul>
 <p>Past that, the <a href="../user-guide/roadmap.html">network server</a> can go further still: as the only owner of its files, it can use SQLite’s exclusive locking mode, which keeps that lock in ordinary memory. In a 2026-10-28 measurement with Python’s own <code>sqlite3</code> module, reads dropped from 1.18 µs to 0.69 µs (a different harness from the gate above, so compare the two figures with each other, not with the gate’s 0.84 µs).</p>
 

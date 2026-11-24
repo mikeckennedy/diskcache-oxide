@@ -4,6 +4,10 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+### Documentation
+
+- Corrected: why a plain `Cache` slows past two or three worker processes is now measured, not guessed. The operating system serializes the shared lock every WAL read takes on the `-shm` file when several processes take it on one file: a loop that only takes and releases that lock falls the same way, and so do Python's `sqlite3` module and diskcache's plain `Cache`. It's severe on macOS; on an x86-64 Linux host a plain `Cache` keeps climbing and only bends past 4 processes. `FanoutCache` is still the answer (`bench/results/read-sentinel-2026-11-24.md`).
+
 ## [0.5.8] - 2026-11-21
 
 No format change: caches made by 0.3.5 and later open as they are. One behavior change, for a child process forked at the wrong moment, and fixes from the same review as 0.4.7 that touch the engine's core.
