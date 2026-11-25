@@ -43,7 +43,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 RESULTS_DIR = Path(__file__).parent / 'results'
 KEYS = 1_000
@@ -122,7 +122,9 @@ def throughput(
     return sum(counts) / elapsed
 
 
-def run_variant(variant: str, counts: list[int], seconds: float) -> dict[str, dict[str, float]]:
+def run_variant(
+    variant: str, counts: list[int], seconds: float, only_mixes: Optional[list[str]] = None
+) -> dict[str, dict[str, float]]:
     """One variant at every mix and thread count, in this process."""
     root = Path(tempfile.mkdtemp(prefix='dco-threads-'))
     caches: list[Any] = []
@@ -159,6 +161,7 @@ def run_variant(variant: str, counts: list[int], seconds: float) -> dict[str, di
                     return cache.get, cache.set
 
         mixes = {'reads': 0} if variant in READS_ONLY else MIXES
+        mixes = {m: e for m, e in mixes.items() if not only_mixes or m in only_mixes}
         rates = {mix: {str(c): throughput(make_ops, c, every, seconds) for c in counts} for mix, every in mixes.items()}
         kernel = {f'{mix} kernel': {str(c): KERNEL_SHARE[(c, every)] for c in counts} for mix, every in mixes.items()}
         return rates | kernel
@@ -212,11 +215,19 @@ def main() -> None:
     parser.add_argument('--machine', default=platform.node().split('.')[0] or 'unknown')
     parser.add_argument('--out', type=Path, default=RESULTS_DIR)
     parser.add_argument('--worker', help=argparse.SUPPRESS)
+    parser.add_argument('--mixes', help=argparse.SUPPRESS)  # the worker's mixes, comma separated (bench.gate)
     args = parser.parse_args()
     counts = [int(c) for c in args.counts.split(',')]
     seconds = args.seconds or (0.2 if args.quick else 1.0)
     if args.worker:
-        print(json.dumps({'meta': describe(), 'results': run_variant(args.worker, counts, seconds)}))
+        print(
+            json.dumps(
+                {
+                    'meta': describe(),
+                    'results': run_variant(args.worker, counts, seconds, args.mixes.split(',') if args.mixes else None),
+                }
+            )
+        )
         return
 
     rounds = args.rounds or (1 if args.quick else 5)

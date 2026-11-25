@@ -165,7 +165,7 @@ Swap diskcache-oxide in behind the existing `DurableCache`/`cache_service` facto
 
 ### Phase 4: Free-threaded performance
 
-Throughput and contention tuning on 3.14t/3.15t: many threads and processes on one directory, pool sizing, and hot-path profiling (`get` especially). Add a benchmark suite to CI that compares against diskcache on GIL and free-threaded builds.
+Throughput and contention tuning on 3.14t/3.15t: many threads and processes on one directory, pool sizing, and hot-path profiling (`get` especially). The benchmark check is `bench.gate`, run by hand on Michael's machines with no CI service (Michael, 2026-11-22): latency and the threaded mixes against diskcache on GIL and free-threaded builds, and, since plan 34, oxide's own scaling (a plain `Cache` and a `FanoutCache(8)` at 2 and 4 threads and processes, as a ratio to one, against floors recorded per machine).
 
 
 Expectation (Michael): at a 1,000:1 read ratio, multiple threads should clearly help. Not getting a benefit means something is serializing that we can profile and remove. Ideas to try:
@@ -236,8 +236,8 @@ Off by default, and only if a real need appears. SQLCipher for the database and 
 
 ### Cross-cutting, every phase
 
-- CI: Linux and macOS, GIL and free-threaded builds, clippy, rustfmt, cargo-deny, mypy/pyright on the stubs.
-- Release wheels via maturin-action once Phase 3 is in production.
+- Checks: there is no CI service. `scripts/check.sh` runs everything a CI job would, locally, on 3.14, 3.14t, 3.15 and 3.15t: the Rust checks (fmt, clippy, tests, docs, cargo-deny), ruff, ty on the package and its stubs, and the suites. Linux runs through `scripts/linux-check.sh` in Docker; `scripts/sanitize.sh`, `scripts/model-check.sh` and `bench.gate` are run by hand before releases, as the release tiers require.
+- Release wheels: `make wheels` builds the sdist and PGO wheels for macOS arm64 and Linux aarch64 and x86_64 (in manylinux Docker); Michael builds the Windows wheels.
 - Architect review of each phase plan before work starts and of the result when the phase ends.
 
 ## Open questions

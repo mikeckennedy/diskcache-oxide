@@ -103,9 +103,13 @@ def memoize(
             """The cache key for these arguments."""
             return args_to_key(base, args, kwargs, typed, skip)
 
+        # Without `typed` or `ignore`, a call with positional arguments only has the key
+        # `(name, *args, None)`: the tuple `args_to_key` builds, made without its list and sort.
+        fast_key = not typed and not skip
+
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            key = __cache_key__(*args, **kwargs)
+            key = (*base, *args, None) if fast_key and not kwargs else __cache_key__(*args, **kwargs)
             try:
                 result = cache.get(key, _MISS, retry=retry)
             except TypeError, ValueError:

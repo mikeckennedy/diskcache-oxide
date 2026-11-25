@@ -4,6 +4,10 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+### Changed
+
+- A memoized call with positional arguments only, on a function decorated without `typed` or `ignore`, builds its key directly: a cache hit spends about 100 ns in the wrapper instead of about 400 (1.19 µs a hit against 1.50 on 3.14, on an Apple M5 Max). The key is the same tuple as before, so entries memoized by earlier versions are still found. Calls with keyword arguments build their key as before.
+
 ### Documentation
 
 - Corrected: why a plain `Cache` slows past two or three worker processes is now measured, not guessed. The operating system serializes the shared lock every WAL read takes on the `-shm` file when several processes take it on one file: a loop that only takes and releases that lock falls the same way, and so do Python's `sqlite3` module and diskcache's plain `Cache`. It's severe on macOS; on an x86-64 Linux host a plain `Cache` keeps climbing and only bends past 4 processes. `FanoutCache` is still the answer (`bench/results/read-sentinel-2026-11-24.md`).

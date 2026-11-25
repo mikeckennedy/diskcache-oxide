@@ -24,6 +24,62 @@ def cache(tmp_path: Path) -> Any:
         yield c
 
 
+@pytest.mark.parametrize(
+    ('args', 'kwargs', 'options'),
+    [
+        pytest.param((), {}, {}, id='no-arguments'),
+        pytest.param((1, 'a', (2, 3.5), None, b'x'), {}, {}, id='positional'),
+        pytest.param((1,), {'b': 2}, {}, id='keyword'),
+        pytest.param((1, 2), {}, {'typed': True}, id='typed'),
+        pytest.param((1, 2), {}, {'ignore': (1,)}, id='ignore'),
+        pytest.param((1, 2), {}, {'name': 'n'}, id='name'),
+        pytest.param((1, 2), {}, {'ignore': ()}, id='empty-ignore-tuple'),
+        pytest.param((1, 2), {}, {'ignore': set()}, id='empty-ignore-set'),
+    ],
+)
+def test_a_call_stores_under_the_key_args_to_key_builds(
+    cache: Any, args: tuple[Any, ...], kwargs: dict[str, Any], options: dict[str, Any]
+) -> None:
+    """The wrapper's fast path for positional-only calls must build the same key, or every entry written by an
+    earlier version would be orphaned."""
+    from diskcache_oxide._memoize import args_to_key
+
+    @cache.memoize(**options)
+    def f(*args: Any, **kwargs: Any) -> str:
+        return 'value'
+
+    f(*args, **kwargs)
+    base = (options.get('name', f'{f.__module__}.{f.__qualname__}'),)
+    expected = args_to_key(base, args, kwargs, options.get('typed', False), frozenset(options.get('ignore', ())))
+    assert f.__cache_key__(*args, **kwargs) == expected
+    assert list(cache.iterkeys()) == [expected]
+    assert cache[expected] == 'value'
+
+
+def test_a_positional_call_stores_under_the_0_5_8_key(cache: Any) -> None:
+    """A literal pin, so the key can't drift along with `args_to_key`: 0.5.8 stored `f(1, 2)` under this tuple."""
+
+    @cache.memoize(name='n')
+    def f(a: int, b: int) -> int:
+        return a + b
+
+    f(1, 2)
+    assert list(cache.iterkeys()) == [('n', 1, 2, None)]
+
+
+def test_a_positional_call_with_an_unkeyable_argument_names_it(cache: Any) -> None:
+    """The fast path builds no key checks of its own: a bad argument (here a method's `self`) still gets the error
+    that names it."""
+
+    class Thing:
+        @cache.memoize(name='m')
+        def double(self, x: int) -> int:
+            return x * 2
+
+    with pytest.raises(TypeError, match='memoize: argument 0 can not be part of a cache key'):
+        Thing().double(2)
+
+
 def test_typed_appends_type_names(cache: Any) -> None:
     @cache.memoize(name='t', typed=True)
     def f(a: Any, b: Any = None) -> Any:
