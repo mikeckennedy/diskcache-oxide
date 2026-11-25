@@ -1,0 +1,11 @@
+Linux talk-python-htz 6.8.0-151-generic #151-Ubuntu SMP PREEMPT_DYNAMIC Wed Nov 11 01:28:36 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+8
+CPU(s):                                  8
+Model name:                              AMD EPYC-Rome Processor
+BIOS Model name:                         NotSpecified  CPU @ 2.0GHz
+Thread(s) per core:                      1
+Core(s) per socket:                      8
+load before:  15:04:05 up  8:11,  4 users,  load average: 0.12, 0.37, 0.41
+load before 3.14:  15:04:05 up  8:11,  4 users,  load average: 0.12, 0.37, 0.41
+load before 3.14t:  15:12:58 up  8:20,  4 users,  load average: 2.81, 1.83, 1.13
+load before 3.15t:  15:21:20 up  8:29,  4 users,  load average: 4.54, 4.01, 2.50
